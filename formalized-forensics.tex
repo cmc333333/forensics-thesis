@@ -56,7 +56,7 @@
 \titlebanner{banner above paper title}        % These are ignored unless
 \preprintfooter{short description of paper}   % 'preprint' option specified.
 
-\title{Title Text}
+\title{A Step Towards Formalized Forensics}
 \subtitle{Subtitle Text, if any}
 
 \authorinfo{Name1}
@@ -84,180 +84,52 @@ keyword1, keyword2
 
 \section{Introduction}
 
-The text of the paper begins here.
+There is no single definition of essential factors with regard to digital
+forensics. Further, the de facto standards are within specific tools. What we
+want is a formalization of what it means for a file to be malicious, deleted,
+altered, etc. To do that, we use the Coq programming language and proof
+environment to formalize a handful of statements along with some
+hand-generated proofs for existing file images.
+
+\section{JPEG File}
+
+We start by considering a relatively straight forward request. I'd like to
+show that a given file is a JPEG. How can we formalize that notion? We could
+check the file extension, but that is not particularly reliable. Instead, we
+will look at the JPEG spec (much easier said than done) and note that JPEG
+files begin with a particular byte code and end with another. We will
+therefore define the proof that a given file is a JPEG as the first type bytes
+equal SOMECODE and the last two are SOMEOTHER. We could imagine other file
+types being similarly defined.
+
+Note that, while we were given an entire file, we only cared about the initial
+and final bytes. As our definition does not involve any other bytes of the
+image, these bytes could be all zeros, all ones, present, damaged, or
+otherwise. The definition doesn't care, and this is a trait we will use in the
+future to limit the size of our proofs.
+
+\section{Delete INode}
+
+Now, let's consider a more complicated example, that of testing whether a
+particular inode index is marked as ``deleted'' in the file system. Note that
+there are many possible definitions of ``deleted'' we may choose from. The
+ext2 file system has redundant mechanisms to define if a file has been
+deleted. We chose one, the allocation bit map. Ultimately, whether or not a
+given inode index is marked as deleted involves finding the ``group block''
+associated with that index, looking up the bit associated with the index in
+the allocation table, and checking whether it is zero (for deleted) or one
+(for allocated).
+
+Of course, there is a lot we glossed over. What is a group block? How do we
+find the right one? How do we know that the inode index provided is valid? To
+answer these questions, we created several additional data structures and
+evidence functions.
+
+\section{Future Work}
+
+automatically generate the proof based on disk images; additional types of
+evidence; abstractions of file systems
 
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-
-
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
-
-More text.
-
-Lots of text.
 
 \appendix
 \section{Appendix Title}
