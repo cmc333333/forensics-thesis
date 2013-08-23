@@ -161,20 +161,24 @@ We use the evidence provided by one of the top entrants, Matt Borland
 need. This evidence included the description of a deleted, ``tar/gzipped file
 containing the tools necessary for creating a home for the attacker on the
 compromised system''. More formally, Borland used the fact that a particular
-file (designated by Inode \#23) was 1) deleted, 2) a gzipped tar, and 3)
-contained malicious files. We will simplify this a bit to come to our
-definition in Coq:
+file was 1) deleted, 2) a gzipped tar, and 3) contained malicious files. We 
+will simplify this a bit to come to our definition in Coq:
 
 \begin{lstlisting}
-Definition borland_malicious_tgz (disk: Disk) 
-  (inodeIndex: Z): 
-  
-  exists (tgz_file: File),
-    (fileFromInode disk inodeIndex) = value tgz_file
-  /\ (isDeleted tgz_file)
-  /\ (isTgz tgz_file)
-  /\ (tgzContainsMaliciousFiles tgz_file).
+Definition borland_malicious_tgz (file: File):
+    (isDeleted file)
+  /\ (isTgz file)
+  /\ (tgzContainsMaliciousFiles file).
 \end{lstlisting}
+
+We've already seen the definition for {\tt isTgz}, but how can we define
+whether or not a file is deleted? Determining whether a file has been deleted
+certainly isn't part of the byte sequences that file contains. Rather, how
+files are marked as deleted changes from file system to file system. For the
+purposes of this definition, however, it shouldn't matter how the underlying
+system handles file deallocation -- we would like to use {\tt
+borland\_malicious\_tgz} on NTFS as easily as on Ext4.
+
 
 and evidence for this particular competition would complete the proof for
 
@@ -187,6 +191,10 @@ It is important to point out that in Borland's writeup (and in many forensics
 papers) the same person is both authoring the {\it definition} of evidence as
 well as {\it providing the evidence} itself. This is exactly the problem
 discussed above, the sort of biased results we are trying to avoid.
+
+Let's dig into our definition a bit deeper. We start by declaring that there
+{\it exists} a file such that the file matches that received from reading
+inodes on the disk. This is particular to 
 
 %Note that, while we were given an entire file, we only cared about the initial
 %and final bytes. As our definition does not involve any other bytes of the
