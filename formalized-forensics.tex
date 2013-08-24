@@ -29,7 +29,7 @@
 % 11pt          To set in 11-point type instead of 9-point.
 % authoryear    To obtain author/year citation style instead of numeric.
 
-\usepackage{amsmath,color,courier,listings,lstcoq,url}
+\usepackage{amsmath,color,listings,lstcoq,url}
 \usepackage[T1]{fontenc}
 
 \definecolor{ltblue}{rgb}{0,0.4,0.4}
@@ -40,8 +40,8 @@
 
 \begin{document}
 
-\lstset{language=coq, basicstyle=\ttfamily\scriptsize, columns=fixed,
-breaklines=true}
+\lstset{language=coq, basicstyle=\ttfamily\scriptsize, columns=flexible,
+keepspaces=true}
 
 \special{papersize=8.5in,11in}
 \setlength{\pdfpageheight}{\paperheight}
@@ -114,18 +114,18 @@ we would see
 
 \begin{lstlisting}
 Definition isJpeg (file: File) :=
-    file @[  0 ] = value 255
+     file @[  0 ] = value 255
   /\ file @[  1 ] = value 216 
   /\ file @[ -2 ] = value 255
   /\ file @[ -1 ] = value 217.
 
 Definition isTgz (file: File) :=
-    file @[ 0 ] = value 31
+     file @[ 0 ] = value 31
   /\ file @[ 1 ] = value 139 
   /\ file @[ 2 ] = value 8.
 
 Definition isElf (file: File) :=
-    file @[ 0 ] = value 127
+     file @[ 0 ] = value 127
   /\ file @[ 1 ] = value 69 
   /\ file @[ 2 ] = value 76
   /\ file @[ 3 ] = value 70.
@@ -160,9 +160,69 @@ We use the evidence provided by one of the top entrants, Matt Borland
 \cite{borland-honeynet}, as a rough outline of the types of evidence we will
 need. This evidence included the description of a deleted, ``tar/gzipped file
 containing the tools necessary for creating a home for the attacker on the
-compromised system''. More formally, Borland used the fact that a particular
-file was 1) deleted, 2) a gzipped tar, and 3) contained malicious files. We 
-will simplify this a bit to come to our definition in Coq:
+compromised system''. Borland provided an informal proof that 1) a particular
+file existed on the system, that it was 2) a gzipped tar, 3) that it was
+deleted, and that 4) the file contained malicious files. Let's consider each
+of these pieces of evidence in turn.
+
+How might we define that a file "exists" on a particular disk image? For a
+simple definition, we could start by claiming a "file" is on a disk image if
+that files contents can be found sequentially on that disk image. We could
+formalize this by saying a file existing on a disk if we can find a starting
+index in that disk such that every byte afterwards matches that of the file.
+
+\begin{lstlisting}
+Definition file_exists_try_1 (disk: Disk) (file: File):
+  exists (startPosition: Z),
+  forall (i: Z),
+  (i >= 0 /\ i < (fileSize file)) -> 
+    disk @[ startPosition + i ] = file @[ i ].
+\end{lstlisting}
+
+This definition isn't very useful in practice, however, as files are very
+often fragmented across multiple segments of a disk image. Moreover, this
+definition would also include false positives, where a "file" is formed by
+looking at the bits that span a fragment boundary. No, we will need a
+definition that is filesystem aware.
+
+\begin{lstlisting}
+Definition file_exists (disk: Disk) (file: File):
+  (* Ext2 *)
+  (exists (inodeIndex: Z), 
+    file = (fileFromINodeIndex disk inodeIndex))
+  \/ (* FAT32 *)
+  (exists (clusterNumber: Z), 
+    file = (fileFromClusterNumber disk clusterNumber))
+  \/ ...
+\end{lstlisting}
+
+The functions {\tt fileFromINodeIndex}, {\tt fileFromClusterNumber}, and their
+ilk are {\it computations} in the sense that we do not, as of yet, give them
+as a Propositional definition. Instead, Coq inspects the contents of the disk
+and runs through the defined algorithms to build the prerequisite SuperBlock,
+GroupDescriptor, etc. structures to create an instance of a File. We will
+discuss these computations in more detail momentarily.
+
+In the mean time, what does a {\tt File} look like? The {\tt File}s discussed
+in this paper are abstract representations common across various file systems.
+To that end, their structure is quite light, needing only a file size, a field
+indicating whether or not the file is marked as deleted, and a function for
+random-accessing bytes within the file. The type signature of the final trait,
+named {\tt byteOffset}, indicates that this function returns an {\tt Exc Z},
+which is equivalent to an {\it Option} -- this is a way to wrap results where
+a failure is possible. If the offset requested is in the file, the result
+would be {\tt value byte}, where byte is the byte at that offset. If
+requesting an offset outside the bounds of the file, you would receive an {\tt
+error}. Note also, that as demonstrated in the examples above, this function
+should accept negative values and search from the end of the file.
+
+\begin{lstlisting}
+Structure File := mkFile {
+  fileSize: Z;
+  deleted: boolean;
+  byteOffset: Z->Exc Z
+}.
+\end{lstlisting}
 
 \begin{lstlisting}
 Definition borland_malicious_tgz (file: File):
