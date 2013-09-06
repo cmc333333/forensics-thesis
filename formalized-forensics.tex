@@ -55,20 +55,22 @@ keepspaces=true}
 \titlebanner{banner above paper title}        % These are ignored unless
 \preprintfooter{short description of paper}   % 'preprint' option specified.
 
-\title{A Step Towards Formalized Forensics}
-\subtitle{Subtitle Text, if any}
+\title{Formalizing the Honeynet}
+\subtitle{Defining and Proving a Rootkit Installation}
 
-\authorinfo{Name1}
-           {Affiliation1}
-           {Email1}
-\authorinfo{Name2\and Name3}
-           {Affiliation2/3}
-           {Email2/3}
+\authorinfo{CM Lubinski}
+           {DePaul University}
+           {cm.lubinski@gmail.com}
 
 \maketitle
 
 \begin{abstract}
-This is the text of the abstract.
+Definitions for multiple file formats, "malicious" file names, and forensic
+time lines are provided in Coq. These are combined to mimic the types of
+evidence given by independent forensics researchers in a Honeynet forensics
+competition. The Honeynet examples are then provided in the form of formal
+proofs based on these definitions. Along the way, functions for creating
+relevant data structures within Coq are also described.
 \end{abstract}
 
 \category{CR-number}{subcategory}{third-level}
@@ -83,21 +85,37 @@ keyword1, keyword2
 
 \section{Introduction}
 
-There is no single definition of essential factors with regard to digital
-forensics. Further, the de facto standards are within specific tools. What we
-want is a formalization of what it means for a file to be malicious, deleted,
-altered, etc. To do that, we use the Coq programming language and proof
-environment to formalize a handful of statements along with some
-hand-generated proofs for existing file images.
+After completing a lengthy customs process in the largest airport of
+burgeoning global power, you notice that your laptop appears to be running
+rather slowly. You begin to suspect that a root-kit has been installed, but
+you are uncertain how to prove this. At first, you consider using
+off-the-shelf antivirus software to find the infection. The risk of damaging
+international relations between your countries is too great when using such
+proprietary software, however. What you really need is a concrete definition
+of a root kit and evidence fitting that definition to prove that your machine
+has been attacked.
 
-\section{Background}
-Ultimately, the long-term goal of this research is to split these two tasks so
-that we can share a set of common definitions for what constitutes evidence.
-If forensics practitioners could prove that their particular disk image (or
-other input) matched agreed-upon definitions, they would have pre-defined
-proofs getting their evidence to a meaningful conclusion.
+This scenario is the ultimate goal of the research provided in this paper. We
+need formal (we will use the Coq programming language) definitions for various
+types of evidence needed by forensics analysts. We will also need a way to
+convert real data (e.g. from a disk image) into these definitions. Combining
+these two ideas, we can provide concrete {\em proofs} regarding whether or not
+a particular image fits such a definition; in the above example, we could
+provide a {\em proof} that a root-kit was installed.
 
-\section{A First Example: File Types}
+To guide our search, we will focus on the evidence structures and proofs
+described by several independent researchers studying a ``Honeynet''
+challenge. The Honeynet Project\cite{honeynet}'s now-defunct {\it Scan of the
+Month} series provided researchers a disk image attained from a compromised
+honeypot (a computer created with the explicit goal of catching malware for
+inspection.) Each month, they were challenged to describe what happened to the
+system and provide evidence for their conclusions. We will consider one
+specific example\cite{honeynet-15}, in which a rootkit was installed on a
+server and the security community was asked to recover the rootkit, prove that
+it had been installed, and provide a step-by-step writeup describing how the
+rootkit was found.
+
+\section{Getting Our Feet Wet with File Types}
 
 We start by considering a relatively straight forward request, proving that a
 given file is a JPEG. How can we formalize that notion? One tact would be to
@@ -146,7 +164,7 @@ Lemma jpeg_is_not_tgz : forall (file: File),
 A full version of this proof (and others mentioned throughout this paper) are
 included in the appendix.
 
-\section{Honeynet Example}
+\section{Introducing the Honeynet Example}
 
 Evidence of that style, though not formality, serves as the building blocks
 for many forensics cases. Consider next an example \cite{honeynet-15} from the
@@ -224,20 +242,35 @@ Structure File := mkFile {
 }.
 \end{lstlisting}
 
+We have now described the definitions for file existence, if a file is a
+gzipped-tar, and a simple definition for whether or not a file is deleted. All
+that is left is to prove that the provided tgz contains malicious files:
+
 \begin{lstlisting}
-Definition borland_malicious_tgz (file: File):
-    (isDeleted file)
+Definition borland_malicious_tgz (disk: Disk):
+  exists (file: File),
+  (file_exists disk file)
+  /\ (deleted file) = true
   /\ (isTgz file)
   /\ (tgzContainsMaliciousFiles file).
 \end{lstlisting}
 
-We've already seen the definition for {\tt isTgz}, but how can we define
-whether or not a file is deleted? Determining whether a file has been deleted
-certainly isn't part of the byte sequences that file contains. Rather, how
-files are marked as deleted changes from file system to file system. For the
-purposes of this definition, however, it shouldn't matter how the underlying
-system handles file deallocation -- we would like to use {\tt
-borland\_malicious\_tgz} on NTFS as easily as on Ext4.
+Defining what it means for a gzipped-tar file to "contain" malicious files
+requires we first introduce some limitation and provide resolving work
+arounds.
+
+\section{The Assumption Type}
+
+Coq, as a theorem proving language, has limited applicability for certain
+practical applications. Due to its constructive representation of natural
+numbers ({\tt nat}), for example, attempting to use this type to represent
+"large" numbers as small at 8000 may cause the interpreter to overflow its
+heap. This means that we make use of binary-representations for numbers and
+use sparse maps to represent disk images. 
+
+Their focus also proofs also leads to a frustrating lack of substantial,
+practical library support. Further, there is no foreign function interface
+which would allow 
 
 
 and evidence for this particular competition would complete the proof for
