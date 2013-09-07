@@ -117,18 +117,29 @@ rootkit was found.
 
 \section{Getting Our Feet Wet with File Types}
 
-We start by considering a relatively straight forward request, proving that a
-given file is a JPEG. How can we formalize that notion? One tact would be to
-use the file name, checking its extension for {\tt jpg} or {\tt jpeg}. We
-could also review the JPEG spec and confirm that all meta data is consistent.
-We will take a middle route, opting to use ``magic numbers'', that is
-tell-tale values within the file data. JPEGs happen to always start with the
-bytes {\tt ff d8} and end with {\tt ff d9}, so we will use that to define
-evidence that a given file is a JPEG. Similarly, gzipped tar files begin with
-{\tt 1f 8b 08} and Linux executables (ELF) begin with {\tt 7f 45 4c 46}.
+We start by considering a relatively straight-forward request: defining what
+it means for a given file to be a JPEG. How can we formalize this notion? One
+tact (used by many operating systems) is to rely on the file extension (if
+present) -- in this case, checking for either {\tt jpg} or {\tt jpeg}. This is
+a very loose definition, however, as malicious users would need give their
+files a different extension to avoid detection. We could instead review the
+JPEG spec and confirm that all of the meta data contained within this file is
+consistent with said spec. This approach runs the opposite end of the
+spectrum, requiring significantly more evidence. Further, the JPEG spec is not
+as tidy as we might hope, and most applications are lenient with the file
+formats they accept.
 
-Writing this in the proof-centric language of Coq (plus some syntactic sugar),
-we would see
+Instead, we will chose a middle route, opting to use ``magic numbers'' as our
+guide. This refers to tell-tale byte values at predictable points within the
+file data. These file signatures are {\it relatively} unique to various file
+formats, so we will use them in our definitions and add additional checks as
+necessary. JPEGs happen to always start with the bytes {\tt ff d8} and end
+with {\tt ff d9}. Similarly, gzipped files begin with {\tt 1f 8b 08} and Linux
+executables (ELFs) begin with {\tt 7f 45 4c 46} ({\tt 7f} E L F).
+
+If we represent each byte as a positive integer, then writing these
+definitions in the proof-centric language of Coq (plus some syntactic sugar)
+would look like
 
 \begin{lstlisting}
 Definition isJpeg (file: File) :=
@@ -137,7 +148,7 @@ Definition isJpeg (file: File) :=
   /\ file @[ -2 ] = value 255
   /\ file @[ -1 ] = value 217.
 
-Definition isTgz (file: File) :=
+Definition isGzip (file: File) :=
      file @[ 0 ] = value 31
   /\ file @[ 1 ] = value 139 
   /\ file @[ 2 ] = value 8.
@@ -149,20 +160,106 @@ Definition isElf (file: File) :=
   /\ file @[ 3 ] = value 70.
 \end{lstlisting}
 
-That is, the first (and, in the case of JPEGs, last) bytes of a file are both
-present (as indicated by {\tt value} and equal to the byte sequences described
-above (here, in the form of positive, base-ten numbers. By defining file types
-in this manner, we can use them as building blocks within larger proofs. For
-example, given these definitions, we can {\it prove} that JPEG files cannot
-also be TGZs:
+For each definition, the first (and, in the case of the JPEG, last) bytes of a
+file must both be present (as indicated by {\tt value}) and equal to the byte
+sequences described above. We will discuss the absence of byte values later,
+but for now, assume that this accounts for ``missing'' evidence. By defining
+file types in this manner, we can use these definition as building block
+within larger definitions and within proofs. For example, given these
+definitions, we can {\it prove} that JPEG files cannot also be gzipped files:
 
 \begin{lstlisting}
-Lemma jpeg_is_not_tgz : forall (file: File),
-  (isJpeg file) -> ~(isTgz file).
+Lemma jpeg_is_not_gzip : forall (file: File),
+  (isJpeg file) -> ~(isGzip file).
 \end{lstlisting}
 
-A full version of this proof (and others mentioned throughout this paper) are
-included in the appendix.
+A full version of this proof (and others mentioned throughout this paper) is
+provided in the appendix.
+
+\section{Expanding Definitions with Honeynet Examples}
+
+Let's now consider the Honeynet {\it Scan of the Month} mentioned in the
+introduction. In his entry for this contest, Matt 
+Borland\cite{borland-honeynet} described a deleted, ``tar/gzipped file
+containing the tools necessary for creating a home for the attacker on the
+compromised system''. Formalizing this a bit, we will say that he proved that
+
+\begin{lstlisting}
+Lemma bordland_honeynet_file:
+  exists (file: File),
+  (OnDisk file honeynet_image_a)
+  /\ isDeleted file
+  /\ isGzip file
+  /\ exists (filename: list Z),
+     (In filename (Tar.fileNamesFrom (gunzip_a file)))
+     /\ maliciousLooking filename.
+\end{lstlisting}
+
+That's a bit of a mouthful, but we are stating there exists a deleted, gzipped
+file on the Honeynet disk image such that, when we unzip the file, the
+contained tar includes a malicious-looking file name. Note that both the
+Honeynet image and the unzipping operation are prepended with `{\tt \_a}',
+which we will use to indicate ``assumption''. We will discuss assumptions in
+detail momentarily; we can treat them as another type of definition until
+then. We would instead prefer to focus on each of the definition in the and
+clause.
+
+\subsection{OnDisk}
+
+How might we define that a file "exists" on a particular disk image? For a
+simple definition, we could start by claiming a ``file'' is on a disk image if
+that file's contents could be found sequentially in the disk. In other words,
+we might consider the file to be on disk if we can find a starting index on
+the disk such that every byte afterwards matches that of the file.
+
+\begin{lstlisting}
+Definition OnDiskTry1 (file: File) (disk: Disk):
+  exists (startPosition: Z), forall (i: Z),
+  (i >= 0 /\ i < (fileSize file)) -> 
+    disk @[ startPosition + i ] = file @[ i ].
+\end{lstlisting}
+
+This definition isn't very useful in practice, however, as files are very
+often fragmented across multiple segments of a disk image. Moreover, this
+definition would also include false positives, where a ``file'' is formed by
+looking at the bits that span a fragment boundary. Files are stored on disks
+via file systems, which make no sequential guarantees (particularly in recent
+file systems such as ZFS and Btrfs).
+
+We must therefore, build our definition for file existence with file systems
+in mind. Proving that a file exists within each type of file system is a
+relatively unique operation, however. As a result, we will define file
+existence as the disjunction of file existence within each file system. While
+the definitions are distinct, they each tend to follow the pattern that there
+exists some file identifier such that if we were to parse the file associated
+with that identifier on the given disk, we would find a file identical to the
+provided file.
+
+\begin{lstlisting}
+Definition OnDisk (file: File) (disk: Disk):
+  (* Ext2 *)
+  (exists (inodeIndex: Z):
+    (parseFileFromInodeIndex disk inodeIndex) = value file)
+  \/ (* FAT32 *)
+  (exists (clusterNumber: Z):
+    (parseFileFromClusterNumber disk clusterNumber) = value file)
+  \/ (* Btrfs *)
+  (exists (key: Z):
+    (parseFileFromBtrfsKey disk key) = value file)
+  \/ ...
+\end{lstlisting}
+
+
+
+
+
+The functions {\tt fileFromINodeIndex}, {\tt fileFromClusterNumber}, and their
+ilk are {\it computations} in the sense that we do not, as of yet, give them
+as a Propositional definition. Instead, Coq inspects the contents of the disk
+and runs through the defined algorithms to build the prerequisite SuperBlock,
+GroupDescriptor, etc. structures to create an instance of a File. We will
+discuss these computations in more detail momentarily.
+
 
 \section{Introducing the Honeynet Example}
 
@@ -183,25 +280,6 @@ file existed on the system, that it was 2) a gzipped tar, 3) that it was
 deleted, and that 4) the file contained malicious files. Let's consider each
 of these pieces of evidence in turn.
 
-How might we define that a file "exists" on a particular disk image? For a
-simple definition, we could start by claiming a "file" is on a disk image if
-that files contents can be found sequentially on that disk image. We could
-formalize this by saying a file existing on a disk if we can find a starting
-index in that disk such that every byte afterwards matches that of the file.
-
-\begin{lstlisting}
-Definition file_exists_try_1 (disk: Disk) (file: File):
-  exists (startPosition: Z),
-  forall (i: Z),
-  (i >= 0 /\ i < (fileSize file)) -> 
-    disk @[ startPosition + i ] = file @[ i ].
-\end{lstlisting}
-
-This definition isn't very useful in practice, however, as files are very
-often fragmented across multiple segments of a disk image. Moreover, this
-definition would also include false positives, where a "file" is formed by
-looking at the bits that span a fragment boundary. No, we will need a
-definition that is filesystem aware.
 
 \begin{lstlisting}
 Definition file_exists (disk: Disk) (file: File):
