@@ -187,24 +187,24 @@ compromised system''. Formalizing this a bit, we will say that he proved that
 \begin{lstlisting}
 Lemma bordland_honeynet_file:
   exists (file: File),
-  (OnDisk file honeynet_image_a)
+  (isOnDisk file honeynet_image_a)
   /\ isDeleted file
   /\ isGzip file
   /\ exists (filename: list Z),
-     (In filename (Tar.fileNamesFrom (gunzip_a file)))
-     /\ maliciousLooking filename.
+     (In filename (Tar.parseFileNames (gunzip_a file)))
+     /\ looksLikeRootkit filename.
 \end{lstlisting}
 
 That's a bit of a mouthful, but we are stating there exists a deleted, gzipped
 file on the Honeynet disk image such that, when we unzip the file, the
 contained tar includes a malicious-looking file name. Note that both the
-Honeynet image and the unzipping operation are prepended with `{\tt \_a}',
+Honeynet image and the unzipping operation are appended with `{\tt \_a}',
 which we will use to indicate ``assumption''. We will discuss assumptions in
 detail momentarily; we can treat them as another type of definition until
-then. We would instead prefer to focus on each of the definition in the and
-clause.
+then. We would instead prefer to focus on each of the definitions in the and
+clause (save {\tt isGzip}, which has already been described).
 
-\subsection{OnDisk}
+\subsection{isOnDisk}
 
 How might we define that a file "exists" on a particular disk image? For a
 simple definition, we could start by claiming a ``file'' is on a disk image if
@@ -213,7 +213,7 @@ we might consider the file to be on disk if we can find a starting index on
 the disk such that every byte afterwards matches that of the file.
 
 \begin{lstlisting}
-Definition OnDiskTry1 (file: File) (disk: Disk):
+Definition isOnDiskTry1 (file: File) (disk: Disk):
   exists (startPosition: Z), forall (i: Z),
   (i >= 0 /\ i < (fileSize file)) -> 
     disk @[ startPosition + i ] = file @[ i ].
@@ -236,7 +236,7 @@ with that identifier on the given disk, we would find a file identical to the
 provided file.
 
 \begin{lstlisting}
-Definition OnDisk (file: File) (disk: Disk):
+Definition isOnDisk (file: File) (disk: Disk):
   (* Ext2 *)
   (exists (inodeIndex: Z):
     (parseFileFromInodeIndex disk inodeIndex) = value file)
@@ -249,68 +249,19 @@ Definition OnDisk (file: File) (disk: Disk):
   \/ ...
 \end{lstlisting}
 
+The functions {\tt parseFileFrom}* perform the work of inspecting the disk
+image, reading the relevant data structures, and creating an abstract
+representation of the results (in this case, a File object.) We will discuss
+parsing computations a bit later.
 
+\subsection{isDeleted}
 
-
-
-The functions {\tt fileFromINodeIndex}, {\tt fileFromClusterNumber}, and their
-ilk are {\it computations} in the sense that we do not, as of yet, give them
-as a Propositional definition. Instead, Coq inspects the contents of the disk
-and runs through the defined algorithms to build the prerequisite SuperBlock,
-GroupDescriptor, etc. structures to create an instance of a File. We will
-discuss these computations in more detail momentarily.
-
-
-\section{Introducing the Honeynet Example}
-
-Evidence of that style, though not formality, serves as the building blocks
-for many forensics cases. Consider next an example \cite{honeynet-15} from the
-Honeynet Project's now-defunct {\it Scan of the Month} series. Here, a disk
-image involved in a rootkit installation was provided to the security
-community. These researchers were challenged to recover a deleted rootkit,
-prove that said rootkit was installed, and provide a step-by-step writeup
-describing how the rootkit was found.
-
-We use the evidence provided by one of the top entrants, Matt Borland
-\cite{borland-honeynet}, as a rough outline of the types of evidence we will
-need. This evidence included the description of a deleted, ``tar/gzipped file
-containing the tools necessary for creating a home for the attacker on the
-compromised system''. Borland provided an informal proof that 1) a particular
-file existed on the system, that it was 2) a gzipped tar, 3) that it was
-deleted, and that 4) the file contained malicious files. Let's consider each
-of these pieces of evidence in turn.
-
-
-\begin{lstlisting}
-Definition file_exists (disk: Disk) (file: File):
-  (* Ext2 *)
-  (exists (inodeIndex: Z), 
-    file = (fileFromINodeIndex disk inodeIndex))
-  \/ (* FAT32 *)
-  (exists (clusterNumber: Z), 
-    file = (fileFromClusterNumber disk clusterNumber))
-  \/ ...
-\end{lstlisting}
-
-The functions {\tt fileFromINodeIndex}, {\tt fileFromClusterNumber}, and their
-ilk are {\it computations} in the sense that we do not, as of yet, give them
-as a Propositional definition. Instead, Coq inspects the contents of the disk
-and runs through the defined algorithms to build the prerequisite SuperBlock,
-GroupDescriptor, etc. structures to create an instance of a File. We will
-discuss these computations in more detail momentarily.
-
-In the mean time, what does a {\tt File} look like? The {\tt File}s discussed
-in this paper are abstract representations common across various file systems.
-To that end, their structure is quite light, needing only a file size, a field
-indicating whether or not the file is marked as deleted, and a function for
-random-accessing bytes within the file. The type signature of the final trait,
-named {\tt byteOffset}, indicates that this function returns an {\tt Exc Z},
-which is equivalent to an {\it Option} -- this is a way to wrap results where
-a failure is possible. If the offset requested is in the file, the result
-would be {\tt value byte}, where byte is the byte at that offset. If
-requesting an offset outside the bounds of the file, you would receive an {\tt
-error}. Note also, that as demonstrated in the examples above, this function
-should accept negative values and search from the end of the file.
+Like existence on the disk, what it means for a file to be deleted is quite
+file system specific. In Ext2, a file might be seen as deleted if its bit in
+the allocation bitmap were zero; in FAT32, we might consider a file deleted if
+it were not accessible via a cluster chain. To account for these varieties, we
+include will include the deletion status of a File within its definition. This
+definition attempts to describe ``universal'' file truths:
 
 \begin{lstlisting}
 Structure File := mkFile {
@@ -320,22 +271,105 @@ Structure File := mkFile {
 }.
 \end{lstlisting}
 
-We have now described the definitions for file existence, if a file is a
-gzipped-tar, and a simple definition for whether or not a file is deleted. All
-that is left is to prove that the provided tgz contains malicious files:
+The first two fields are self-explanatory, but the third warrants additional
+explanation. This field is a function that, when given an offset within a
+file, returns the byte value found at that offset within the file. As
+described in our investigation of file types, we must account for the
+possibility that the byte requested is not available (e.g. out of range or not
+within our assumptions). We must wrap the result in an Exc (a.k.a. Option) to
+handle this situation.
+
+Coming back to goal, it should be easy to see that the definition of {\tt
+isDeleted} effectively just delegates to the boolean value that is part of the
+File representation:
 
 \begin{lstlisting}
-Definition borland_malicious_tgz (disk: Disk):
-  exists (file: File),
-  (file_exists disk file)
-  /\ (deleted file) = true
-  /\ (isTgz file)
-  /\ (tgzContainsMaliciousFiles file).
+Definition isDeleted (file: File):
+  file.(deleted) = true.
 \end{lstlisting}
 
-Defining what it means for a gzipped-tar file to "contain" malicious files
-requires we first introduce some limitation and provide resolving work
-arounds.
+\subsection{Malicious Filenames}
+
+The final clause in our lemma states that one of the filenames contained in
+the gzipped-tar is suspicious. We start with  another assumption, in this case
+the decompression algorithm for gzipped files; while we try to keep as many of
+our computations within Coq as possible, some (like unzipping a file) were far
+out of scope, so we keep them as assumptions. Once the file is unzipped, we
+run another parsing computation, {\tt Tar.parseFileNames}, this time
+retrieving all of the file names contained within the unzipped tar.
+
+The only new {\it definition} is that of {\tt looksLikeRootkit}. For the sake
+of this definition, we will define that a filename looks like a filename
+involved in a rootkit if that filename, excluding its path prefix, matches any
+of a predefined list of system files. These include task managers such as {\tt
+top} and {\tt ProcMon.exe}, which root kits replace to hide their activities,
+as well as {\tt ssh} and {\tt rsync}, which root kits replace to allow them
+the ability to monitor traffic. We treat file names as lists of bytes to
+account for unicode and other non-ascii characters which would be excluded by
+Coq's string/ascii package.
+
+\begin{lstlisting}
+Definition looksLikeRootkit (fileName: list Z):
+  In (trimFileNamePrefix fileName) 
+     (map ascii2Bytes ("ps" :: "netstat" :: "top" :: "ifconfig" :: "ssh"
+                       :: "rsync" :: "ProcMon.exe" :: nil)).
+\end{lstlisting}
+
+Note that, for ease of description, we provide file names as ascii strings and
+then convert each to their equivalent, byte representation ({\tt list Z}) via
+the {\tt ascii2Bytes} function.
+
+\section{Lemmas, Computations, and Definitions; Oh My!}
+
+We have now come across several core concepts of this research, and it is easy
+to see how they might be confused. Before we continue, let us solidify our
+understanding of each category.
+
+We are most familiar with {\bf definitions}, which provide a name for a common
+understanding of a concept. For example, we provided definitions for {\tt
+isGzip}, {\tt looksLikeRootkit}, etc. The wider goal of this research is to
+provide a set of common definitions for concepts pertinent to the forensics
+community. This paper describes several which are relevant to the Honeynet
+example, but other definitions might include ``web page access'' (e.g. by
+inspecting browser history), ``in contact with'' (e.g. there exists records of
+email communication), and ``last time logged in''.
+
+Definitions are most often built by combining aspects of various abstract {\bf
+data structures}, ``universal'' representations of data-related concepts
+within forensics. We have seen these used to represent files, and we will see
+them represent various Ext2 file system structures, as well as events in a
+reconstructed timeline. These structures serve as a way of differentiating
+particular parsing computations (which build the structures) from definitions
+involving these structures. It should be relatively simple for someone to
+write a different parsing algorithm which produces the same structures without
+affecting any of the definitions.
+
+{\bf computations/parsing}
+
+{\bf evidence/lemmas}
+
+{\bf utility functions}
+
+\section{Nonesense Past This Point}
+
+relation to a file name?); ``data structures'' are abstract representations of
+data discussed in the definitions (e.g. a {\tt File}, a {\tt Timeline}, etc.);
+``assumptions'' are data structures 
+
+``functions'', most often prepended with {\tt parse} 
+
+``functions'', most often prepended with {\tt
+parse} refer to computations which are executed
+
+
+
+The functions {\tt fileFromINodeIndex}, {\tt fileFromClusterNumber}, and their
+ilk are {\it computations} in the sense that we do not, as of yet, give them
+as a Propositional definition. Instead, Coq inspects the contents of the disk
+and runs through the defined algorithms to build the prerequisite SuperBlock,
+GroupDescriptor, etc. structures to create an instance of a File. We will
+discuss these computations in more detail momentarily.
+
 
 \section{The Assumption Type}
 
