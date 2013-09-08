@@ -215,7 +215,7 @@ the disk such that every byte afterwards matches that of the file.
 \begin{lstlisting}
 Definition isOnDiskTry1 (file: File) (disk: Disk):
   exists (startPosition: Z), forall (i: Z),
-  (i >= 0 /\ i < (fileSize file)) -> 
+  (i >= 0 /\ i < file.(fileSize)) -> 
     disk @[ startPosition + i ] = file @[ i ].
 \end{lstlisting}
 
@@ -311,8 +311,9 @@ Coq's string/ascii package.
 \begin{lstlisting}
 Definition looksLikeRootkit (fileName: list Z):
   In (trimFileNamePrefix fileName) 
-     (map ascii2Bytes ("ps" :: "netstat" :: "top" :: "ifconfig" :: "ssh"
-                       :: "rsync" :: "ProcMon.exe" :: nil)).
+     (map ascii2Bytes ("ps" :: "netstat" :: "top" :: "ifconfig" 
+                       :: "ssh" :: "rsync" :: "ProcMon.exe" 
+                       :: nil)).
 \end{lstlisting}
 
 Note that, for ease of description, we provide file names as ascii strings and
@@ -344,32 +345,60 @@ involving these structures. It should be relatively simple for someone to
 write a different parsing algorithm which produces the same structures without
 affecting any of the definitions.
 
-{\bf computations/parsing}
+Unfortunately, the Coq proof environment is quite limited with regards to
+practical applications. It cannot, for example, read bytes from a disk image;
+it cannot (for our intents) call external programs to transform data; it
+cannot even instantiate a list of tens of thousands of values. We work around
+these limitations by making {\bf assumptions} about our environment (with the
+suffix {\tt \_a}) which entail only the relevant pieces of data needed for our
+proofs. We won't read a file from disk; instead, we will generate a {\it
+sparse} map to represent that disk, including only the offsets we care about.
+Assumptions are also used to account for transformations that would normally
+be performed by a trusted, external program. We cannot, for instance, run
+``gunzip'', nor do we want to try to implement that algorithm within Coq.
+Instead, we require an assumption be made that encompasses that activity. Our
+proofs cannot validate that {\tt disk\_a} or {\tt gunzip\_a} accurately
+represent values on the disk or the output of an unzipping operation -- they
+instead trust those assumptions to be accurate and rely on users for
+verification.
 
-{\bf evidence/lemmas}
+Where possible, we do attempt to {\bf parse} and/or {\bf compute} values
+within Coq. Here we have codified algorithms which take the bytes from disk
+(assumptions) and convert them into relevant structures. This might mean
+creating Inodes, SuperBlocks, and GroupDescriptors for a disk with Ext2 on it,
+or reading headers from the data associated with an abstract tar file. In all
+cases, these operations are our (perhaps flawed) implementations of various
+specifications; users should feel free to check the structures created against
+those found using other tools. Ultimately, we aimed to provide definitions and
+data structures which could serve as building blocks for proofs; parsing and
+computations are simply the glue that tie those building blocks to actual
+data.
 
-{\bf utility functions}
+The Honeynet competition we've described required researchers to provide
+``{\bf evidence}'' or ``proof'' that the disk had been compromised by a
+rootkit. This required that the researchers both define what acceptable
+evidence would look like as well as provide it the evidence regarding the
+attacked server. This led each researcher to provide different types of
+evidence depending on what that researcher found to be acceptable. While we
+could create definitions for the various types of evidence, we will instead
+follow the Honeynet applicants' lead and provide only the evidence itself in
+the form of a {\bf lemma} or proof. This evidence will be in the form of a
+proof term, which the author of the proof can build up using Coq's tactic
+system. It is then up to the reviewer to determine whether or not the evidence
+provided by an applicant fits a familiar definition.
+
+Finally, the code written for this research is sprinkled with {\bf utility
+functions} to perform (mostly) simple transformations. {\tt
+trimFileNamePrefix} and {\tt ascii2Bytes} are two such examples which make
+explaining (and hopefully, understanding) the code samples easier. These
+functions are not necessary for the definitions, proofs, etc. where they
+appear; they simply make the code more terse.
+
+\section{Computing Our First Lemma}
+
+\section{Timelines as Evidence}
 
 \section{Nonesense Past This Point}
-
-relation to a file name?); ``data structures'' are abstract representations of
-data discussed in the definitions (e.g. a {\tt File}, a {\tt Timeline}, etc.);
-``assumptions'' are data structures 
-
-``functions'', most often prepended with {\tt parse} 
-
-``functions'', most often prepended with {\tt
-parse} refer to computations which are executed
-
-
-
-The functions {\tt fileFromINodeIndex}, {\tt fileFromClusterNumber}, and their
-ilk are {\it computations} in the sense that we do not, as of yet, give them
-as a Propositional definition. Instead, Coq inspects the contents of the disk
-and runs through the defined algorithms to build the prerequisite SuperBlock,
-GroupDescriptor, etc. structures to create an instance of a File. We will
-discuss these computations in more detail momentarily.
-
 
 \section{The Assumption Type}
 
