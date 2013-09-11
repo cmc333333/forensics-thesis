@@ -396,30 +396,74 @@ appear; they simply make the code more terse.
 
 \section{Computing Our First Lemma}
 
+Now that we have introduced each of these contents, let's step through the
+proof for our {\tt bordland\_honeynet\_file} proof, which will touch on each.
+
+\subsection{Assumptions}
+Our proof will make use of two assumptions: {\tt honeynet\_image\_a}, a {\tt
+Disk} and {\tt gunzip\_a}, a function, {\tt File->File}. The {\tt Disk} type
+is used to represent a disk image throughout our definitions and proofs.
+Technically, they are functions from {\tt Z} to {\tt Exc Z}, acting as
+byte-retrieval mechanism; give a {\tt Disk} an offset, and it will respond
+with the byte value (a {\tt Z}) at that offset in the disk image, or {\tt
+error} if no such byte exists on the disk. Generally, disk data is backed by
+an in-memory mapping via Coq's {\tt FMapAVL} trees, and must be generated from
+the true disk values. Due to Coq's limitations on data structure sizes, we
+only populate these maps with essential values; once the map reaches a few
+thousand entries, it will no longer be usable within Coq.
+
+The second assumption represents gzip's unzipping/deflating operation. As
+implementing the decompression algorithm used within Coq would not provide
+particularly valuable information, we instead delegate its operation to an
+assumption. This assumption needs to be able to convert a compressed, gzip
+file into the corresponding, uncompressed file, which effectively means
+providing a new {\tt File} populated with the relevant bytes. In our example,
+we used the {\it Sleuth Kit}'s {\tt icat} program to pull inode {\tt 23}'s
+contents from the disk image, ran {\tt gunzip} on the resulting {\tt tgz}
+file, and then pulled the relevant bytes (i.e. those necessary from the tar
+file headers). We effectively just wrap this data in a function that,
+regardless of {\tt File} input, returns the uncompressed, tar {\tt File}.
+
+\subsection{Parsing a File via INode}
+
+Our evidence relies on the {\it existence} of a {\tt File} which is on disk,
+deleted, etc., so our proof for this evidence need only provide such a {\tt
+File}, and it will be easiest to pull that file from the disk image. We
+therefore use a parsing function (rather, series of functions) to get this.
+Ultimately, we will simply call and provide as demonstrative proof
+
+\begin{lstlisting}
+(Inode.parseFileFromInodeIndex honeynet_image_a 23)
+\end{lstlisting}
+
+To get to that point where we are confident in the results of this function,
+we must peal off each layer and review each constructed data structure.
+
+\subsubsection{parseFileFromInodeIndex}
+
+At the outermost conceptual layer, we have a function which, when given a disk
+and Ext2 Inode identifier, returns either an error or a valid File structure
+associated with that file. That file is created depending on the results of a
+deletion check and an attempt to parse the associated Inode structure. If
+either of those computations fails, we want the entire computation to fail, so
+we use a monadic approach. 
+
+\begin{lstlisting}
+Function parseFileFromInodeIndex (disk: Disk) (inodeIndex: Z) : Exc File :=
+  (Ext2IsDeletedInode inodeIndex disk) flatmap{ fun deleted =>
+    (ext2_inode_from disk inodeIndex) map{ fun inode =>
+      mkFile
+        inode.(lowerBitsFileSize)
+        deleted
+        (mkDiskFrom (build_file_data disk inode relevantBytes))
+    }
+  }
+.
+\end{lstlisting}
+
 \section{Timelines as Evidence}
 
 \section{Nonesense Past This Point}
-
-\section{The Assumption Type}
-
-Coq, as a theorem proving language, has limited applicability for certain
-practical applications. Due to its constructive representation of natural
-numbers ({\tt nat}), for example, attempting to use this type to represent
-"large" numbers as small at 8000 may cause the interpreter to overflow its
-heap. This means that we make use of binary-representations for numbers and
-use sparse maps to represent disk images. 
-
-Their focus also proofs also leads to a frustrating lack of substantial,
-practical library support. Further, there is no foreign function interface
-which would allow 
-
-
-and evidence for this particular competition would complete the proof for
-
-\begin{lstlisting}
-Lemma borland_15_proof: 
-  (bordland_malicious_tgz honeynet_15_image 23).
-\end{lstlisting}
 
 It is important to point out that in Borland's writeup (and in many forensics
 papers) the same person is both authoring the {\it definition} of evidence as
@@ -490,13 +534,15 @@ Acknowledgments, if needed.
 \softraggedright
 
 \bibitem{honeynet}
-The Honeynet Project. \url{http://www.honeynet.org/}
+  The Honeynet Project. \url{http://www.honeynet.org/}
 \bibitem{honeynet-15}
-The Honeynet Project \emph{Scan of the Month} \#15.
-\url{http://old.honeynet.org/scans/scan15/}
+  The Honeynet Project \emph{Scan of the Month} \#15.
+  \url{http://old.honeynet.org/scans/scan15/}
 \bibitem{borland-honeynet}
-Borland, Matt. Submission to Honeynet.org \emph{Scan of the Month},
-05/05/2001. \url{http://old.honeynet.org/scans/scan15/som/som6.txt}
+  Borland, Matt. Submission to Honeynet.org \emph{Scan of the Month},
+  05/05/2001. \url{http://old.honeynet.org/scans/scan15/som/som6.txt}
+\bibitem{sleuth-kit}
+  Sleuth Kit
 
 \end{thebibliography}
 
