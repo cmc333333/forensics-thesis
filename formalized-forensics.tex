@@ -443,21 +443,84 @@ we must peal off each layer and review each constructed data structure.
 
 At the outermost conceptual layer, we have a function which, when given a disk
 and Ext2 Inode identifier, returns either an error or a valid File structure
-associated with that file. That file is created depending on the results of a
-deletion check and an attempt to parse the associated Inode structure. If
-either of those computations fails, we want the entire computation to fail, so
-we use a monadic approach. 
+associated with that file. As we discussed earlier, a {\tt File} is composed
+of a deletion status, a file size, and a function that retrieves bytes within
+the file. Retrieving each of these fields relies on first parsing out the
+Superblock (the ``root'' structure in the Ext2 file system) and the Group
+Descriptor associated with the inode; the file size and function which
+retrieves bytes further rely on parsing out the inode structure. Each of those
+parsing computations can fail, and if this occurs, we want the entire {\tt
+File} parsing function to propagate the failure. A functional solution to the
+problem is to use a monadic approach, taking each step in the computation only
+if previous result was successful, and ``flattening'' the results. 
 
 \begin{lstlisting}
-Function parseFileFromInodeIndex (disk: Disk) (inodeIndex: Z) : Exc File :=
-  (Ext2IsDeletedInode inodeIndex disk) flatmap{ fun deleted =>
-    (ext2_inode_from disk inodeIndex) map{ fun inode =>
+Function parseFileFromInodeIndex (disk: Disk) (inodeIndex: Z) 
+: Exc File :=
+  (Ext2.parseSuperBlock disk) flatmap (fun superblock =>
+    let groupId := 
+      inodeIndex / superblock.(numInodesInBlockGroup) in
+    let inodeIndexInGroup := 
+      inodeIndex mod superblock.(numInodesInBlockGroup) in
+    (Ext2.parseGroupDescriptor disk superblock 
+                               groupId) flatmap (
+      fun groupDesc =>
+
+      (Ext2.parseInode disk superblock groupDesc 
+                       inodeIndex) map (
+        fun inode =>
+
+        mkFile
+          inode.(lowerBitsFileSize)
+          (Ext2.parseDeleted disk superblock groupDesc
+                             inodeIndexInGroup)
+          (Inode.fetchFileByte disk inode)
+      )
+    )
+  )
+.
+\end{lstlisting}
+
+As a quick primer on Ext2, each file has an associated Inode structure on
+disk, which contains information about the file's size, modification times,
+etc., and is identified by a positive, integer index. Inodes are grouped into
+collections such that each collection (a ``Block Group'') can aggregate data
+about the Inodes, such as which inodes are allocated, how many are
+directories, etc. in a ``Group Descriptor'' structure. Meta information about
+the whole file system, such as the number of Inodes in each group, is stored
+in the ``SuperBlock''.
+
+\subsubsection{parseSuperBlock}
+
+\subsubsection{parseGroupDescriptor}
+
+\subsubsection{parseInode}
+
+\subsubsection{parseDeleted}
+
+\subsubsection{fetchFileBytes}
+
+\begin{lstlisting}
+      let bitmapStart := (ba2Offset 
+                            superblock
+                            groupDesc.(startBlockAddrOfInodeBitmap)) in
+      (* Fetch the allocation byte for this inode *)
+      (disk (bitmapStart + (inodeIndexInGroup/8))) map (fun allocationByte =>
+        (andb
+          (* Valid INode *)
+          (inodeIndex <=? superblock.(numInodes))
+
+          (* The bit associated with this inode is 0 *)
+          (negb (Z.testbit allocationByte (inodeIndexInGroup mod 8)))
+        )
+      )
+    (Ext2.parseInodeFrom disk inodeIndex) map (fun inode =>
       mkFile
         inode.(lowerBitsFileSize)
         deleted
-        (mkDiskFrom (build_file_data disk inode relevantBytes))
-    }
-  }
+        (Inode.fetchFileByte disk)
+    )
+  )
 .
 \end{lstlisting}
 
