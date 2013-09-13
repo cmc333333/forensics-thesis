@@ -190,7 +190,7 @@ Lemma bordland_honeynet_file:
   (isOnDisk file honeynet_image_a)
   /\ isDeleted file
   /\ isGzip file
-  /\ exists (filename: list Z),
+  /\ exists (filename: ByteString),
      (In filename (Tar.parseFileNames (gunzip_a file)))
      /\ looksLikeRootkit filename.
 \end{lstlisting}
@@ -309,7 +309,7 @@ account for unicode and other non-ascii characters which would be excluded by
 Coq's string/ascii package.
 
 \begin{lstlisting}
-Definition looksLikeRootkit (fileName: list Z):
+Definition looksLikeRootkit (fileName: ByteString):
   In (trimFileNamePrefix fileName) 
      (map ascii2Bytes ("ps" :: "netstat" :: "top" :: "ifconfig" 
                        :: "ssh" :: "rsync" :: "ProcMon.exe" 
@@ -317,8 +317,8 @@ Definition looksLikeRootkit (fileName: list Z):
 \end{lstlisting}
 
 Note that, for ease of description, we provide file names as ascii strings and
-then convert each to their equivalent, byte representation ({\tt list Z}) via
-the {\tt ascii2Bytes} function.
+then convert each to their equivalent, byte representation via the {\tt
+ascii2Bytes} function.
 
 \section{Lemmas, Computations, and Definitions; Oh My!}
 
@@ -457,12 +457,12 @@ if previous result was successful, and ``flattening'' the results.
 \begin{lstlisting}
 Function parseFileFromInodeIndex (disk: Disk) (inodeIndex: Z) 
 : Exc File :=
-  (Ext2.parseSuperBlock disk) flatmap (fun superblock =>
+  (Ext2.findAndParseSuperBlock disk) flatmap (fun superblock =>
     let groupId := 
       inodeIndex / superblock.(numInodesInBlockGroup) in
     let inodeIndexInGroup := 
       inodeIndex mod superblock.(numInodesInBlockGroup) in
-    (Ext2.parseGroupDescriptor disk superblock 
+    (Ext2.findAndParseGroupDescriptor disk superblock 
                                groupId) flatmap (
       fun groupDesc =>
 
@@ -490,9 +490,131 @@ directories, etc. in a ``Group Descriptor'' structure. Meta information about
 the whole file system, such as the number of Inodes in each group, is stored
 in the ``SuperBlock''.
 
-\subsubsection{parseSuperBlock}
+\subsubsection{findAndParseSuperBlock}
 
-\subsubsection{parseGroupDescriptor}
+The SuperBlock structure is generally located at multiple positions on a disk
+image for redundancy. The first is always positioned after any boot code on
+the disk, starting at the 1024th byte. While the size of the SuperBlock
+depends on the revision of Ext, the spec is largely compatible, so we will use
+the SuperBlock structure described by David Poirier\cite{non-gnu}, which cares
+only about the first 264 or so bytes of the 1024 allocation.
+
+Finding and parsing the SuperBlock, then, amounts to jumping to offset 1024 on
+the disk and plugging in the read values into a SuperBlock structure. We will
+use a {\tt shift} function to effectively reset the ``first'' offset in the
+disk @todo. The values to be stored are largely encoded as little endian byte
+sequences, so we will make frequent use of an unsigned conversion function,
+{\tt seq\_lendu}. While we omit most of the fields, the function looks
+something like:
+
+\begin{lstlisting}
+Function findAndParseSuperBlock (disk: Disk): Exc SuperBlock :=
+  let disk := (shift disk 1024) in
+  (seq_lendu disk 0 4) flatmap (fun inodesCount =>
+    (seq_lendu disk 4 4) flatmap (fun blocksCount =>
+      (seq_lendu disk 8 4) flatmap (fun reservedBlocksCount =>
+        (* ... Additional fields omitted ... *)
+
+        (seq_lendu disk 260 4) map (fun firstMetaBg =>
+          mkSuperBlock
+            inodesCount
+            blocksCount
+            reservedBlocksCount
+            (* ... Additional fields omitted ... *)
+            firstMetaBg
+        )
+        (* ... Additional parentheses omitted ... *)
+      )
+    )
+  ).
+\end{lstlisting}
+
+While we parse out virtually all of the fields of a SuperBlock, we will need
+only a handful. {\tt inodesCount} provides an upper bound for inode indices
+(which we use to validate that a given inode exists). {\tt inodesPerGroup}
+will appear several times in this paper; the field indicates the number of
+inodes assigned to each GroupDescriptor. Hence, that field provides a way to
+determine which GroupDescriptor is needed for a particular inode index. The
+{\tt logBlockSize} field is also of interest, as we will use it to determine
+the number of bytes each block on disk spans. This is encoded using the
+logarithmic scale, but we provide a simple function to convert to the true
+number of bytes.
+
+\begin{lstlisting}
+Function blockSize (superblock: SuperBlock) := 
+  Z.shiftl 1024 superblock.(logBlockSize).
+\end{lstlisting}
+
+\subsubsection{Block Addresses}
+
+Below the level of SuperBlocks, the Ext2 file system breaks the disk into
+``blocks'' for reference purposes. Despite our use cases, in practice, rarely
+does the need to retrieve a single byte from the disk arise on its own.
+Instead, data is most often retrieved in sequential chunks, so to minimize
+bandwidth, references to specific parts of the disk are identified by ``block
+address''. These are akin to cylinders in the FAT32 file system, and the
+conversion between a block address and a byte position on the disk is
+relatively straight forward. Given the size of a block, treat the disk as an
+array of blocks and simply jump to the relevant position.
+
+\begin{lstlisting}
+Function ba2Offset (superblock: SuperBlock) (blockAddress: Z) :=
+  1024 (* Boot sector *)
+  (* 1-indexed *)
+  + ((blockSize superblock) * (blockAddress + 1))
+.
+\end{lstlisting}
+
+\subsubsection{findAndParseGroupDescriptor}
+
+GroupDescriptors will be represented with a similar structure, though with far
+fewer fields. GroupDescriptors have 32 allocated bytes, though only 20 are
+used, and an array of all GroupDescriptors can be found in the block
+immediately following a SuperBlock. Finding a specific GroupDescriptor
+therefore requires that we first use the superblock to determine where this
+array begins, and we jump to the offset of the group that we care about within
+that array.
+
+\begin{lstlisting}
+Function findAndParseGroupDescriptor 
+  (disk: Disk) (superblock: SuperBlock) (groupId: Z)
+  : Exc GroupDescriptor :=
+  let groupBlockArrayOffset := 1024 + (blockSize superblock) in
+  let descriptorOffset := 32 * groupId in
+  let disk := (shift disk (groupBlockArrayOffset 
+                           + descriptorOffset)) in
+  (seq_lendu disk 0 4) flatmap (fun blockBitmap =>
+    (seq_lendu disk 4 4) flatmap (fun inodeBitmap =>
+      (seq_lendu disk 8 4) flatmap (fun inodeTable =>
+        (seq_lendu disk 12 2) flatmap (fun freeBlocksCount =>
+          (seq_lendu disk 14 2) flatmap (fun freeInodesCount =>
+            (seq_lendu disk 16 2) flatmap (fun usedDirsCount =>
+              (seq_lendu disk 18 2) map (fun pad =>
+                mkGroupDescriptor
+                  blockBitmap
+                  inodeBitmap
+                  inodeTable
+                  freeBlocksCount
+                  freeInodesCount
+                  usedDirsCount
+                  pad
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+.
+\end{lstlisting}
+
+Two of the fields from this structure will be particularly useful, the {\tt
+inodeBitmap} and the {\tt inodeTable}. Both contain block addresses, pointing
+to the start of a sequence of inode-related data. The former is simply an
+array where each bit represents whether or not the corresponding Inode is
+allocated; this will be of great use when we are calculating deletion status.
+The latter points to an array of Inode structures, as will be described
+shortly.
 
 \subsubsection{parseInode}
 
@@ -606,6 +728,8 @@ Acknowledgments, if needed.
   05/05/2001. \url{http://old.honeynet.org/scans/scan15/som/som6.txt}
 \bibitem{sleuth-kit}
   Sleuth Kit
+\bibitem{non-gnu}
+  http://www.nongnu.org/ext2-doc/ext2.html
 
 \end{thebibliography}
 
