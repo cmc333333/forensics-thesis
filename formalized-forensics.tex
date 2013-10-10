@@ -406,8 +406,8 @@ appear; they simply make the code more terse.
 
 \section{Computing Our First Lemma}
 
-Now that we have introduced each of these contents, let's step through the
-proof for our {\tt borland\_honeynet\_file} proof, which will touch on each.
+Not that we have introduced each of these concepts, let's step through our
+{\tt borland\_honeynet\_file} proof, which will touch on each.
 
 \subsection{A Note on Functional Idioms}
 
@@ -490,16 +490,18 @@ regardless of {\tt File} input, returns the uncompressed, tar {\tt File}.
 
 Our evidence relies on the {\it existence} of a {\tt File} which is on disk,
 deleted, etc., so our proof for this evidence need only provide such a {\tt
-File}, and it will be easiest to pull that file from the disk image. We
-therefore use a parsing function (rather, series of functions) to get this.
-Ultimately, we will simply call and provide as demonstrative proof
+File}. Hypothetically, this should be easy, as we can just pull the file from
+the disk image directly. We therefore use a parsing function (rather, a series
+of functions) to retrieve this file and provide it as demonstrative proof.
+Ultimately, we will need to call
 
 \begin{lstlisting}
 (Ext2.findAndParseFile honeynet_image_a 23)
 \end{lstlisting}
 
-To get to that point where we are confident in the results of this function,
-we must peal off each layer and review each constructed data structure.
+To be confident in this function's results, however, we will need to
+understand how Ext2 file systems are laid out on disk. We will proceed by
+pealing off each layer of the call and review the constructed data structures.
 
 \subsubsection{findAndParseFile}
 
@@ -507,14 +509,42 @@ At the outermost conceptual layer, we have a function which, when given a disk
 and Ext2 Inode identifier, returns either an error or a valid File structure
 associated with that file. As we discussed earlier, a {\tt File} is composed
 of a deletion status, a file size, and a function that retrieves bytes within
-the file. Retrieving each of these fields relies on first parsing out the
-Superblock (the ``root'' structure in the Ext2 file system) and the Group
-Descriptor associated with the inode; the file size and function which
-retrieves bytes further rely on parsing out the inode structure. Each of those
-parsing computations can fail, and if this occurs, we want the entire {\tt
-File} parsing function to propagate the failure. A functional solution to the
-problem is to use a monadic approach, taking each step in the computation only
-if previous result was successful, and ``flattening'' the results. 
+the file. These fields require we first parse out the {\tt SuperBlock} of the
+disk and the {\tt GroupDescriptor} and {\tt Inode} associated with our index
+({\tt 23}).
+
+To understand what these structures mean, one must first learn how Ext2 is
+structured. At its core, the file system is composed of a sequence of
+equally-sized chunks of bytes (called ``blocks''). Files are not necessarily
+stored on sequential (or even contiguous) blocks; their data may be parcelled
+throughout the disk image (as we will describe when discussing Inodes, below).
+Each file is referenced by a single ``Inode'' structure, which keeps track of
+the file's data locations as well as access times, file size, and other meta
+data. Inodes are collected into ``groups'', which have meta data stored in a
+``Group Descriptor''. 
+
+This descriptor includes information about which Inodes are allocated, etc. as
+well as provides a mechanism to segment the administration of Inodes. We can
+easily compute which group a particular Inode index belongs to by dividing it
+by the number of inodes per group. We can compute the Inode's position within
+that group by taking the remainder of this division (i.e. by applying the
+mod). It's important to note for both of these operations that Inode indices
+are one-indexed, as are group descriptors; this will lead to some additions
+and subtractions of one throughout our code to convert between zero- (which is
+easier to compute on) and one-based indices.
+
+Meta data about the file system as a whole is stored in a special block known
+as the ``SuperBlock'', which lives at a predictable position on the disk. The
+SuperBlock contains information such as how large each block is, where the
+collection of GroupDescriptors starts, and the number of Inodes per group.
+While we do not use this fact, the SuperBlock is usually stored redundantly on
+the disk, meaning we could verify its values with the copies.
+
+Returning to our parsing efforts we must note that each attempt to pull out a
+SuperBlock, GroupDescriptor, etc. may fail, and if this occurs, we want the
+entire File parsing function to propagate the failure. Here we will use the
+{\tt \_flatmap\_} approach described above, treating the computation as a
+monad.
 
 \begin{lstlisting}
 Definition findAndParseFile (disk: Disk) (inodeIndex: Z) 
@@ -537,34 +567,37 @@ Definition findAndParseFile (disk: Disk) (inodeIndex: Z)
   )))).
 \end{lstlisting}
 
-As a quick primer on Ext2, each file has an associated Inode structure on
-disk, which contains information about the file's size, modification times,
-etc., and is identified by a positive, integer index. Inodes are grouped into
-collections such that each collection (a ``Block Group'') can aggregate data
-about the Inodes, such as which inodes are allocated, how many are
-directories, etc. in a ``Group Descriptor'' structure. Meta information about
-the whole file system, such as the number of Inodes in each group, is stored
-in the ``SuperBlock''.
-
 \subsubsection{findAndParseSuperBlock}
 
-The SuperBlock structure is generally located at multiple positions on a disk
-image for redundancy. The first is always positioned after any boot code on
-the disk, starting at the 1024th byte. While the size of the SuperBlock
-depends on the revision of Ext, the spec is largely compatible, so we will use
-the SuperBlock structure described by David Poirier\cite{non-gnu}, which cares
-only about the first 264 or so bytes of the 1024 allocation.
+Regardless of block size, the first SuperBlock can be found starting at the
+1024th byte. Below this position is the boot sector, executable code that
+loads prior to the main operating system (think boot loaders like LILO, GRUB,
+and MBR). While the size of the SuperBlock depends on the revision of Ext, the
+spec is largely compatible, so we will use the SuperBlock structure described
+by one of Ext2's original authors, David Poirier\cite{non-gnu}. This spec
+cares only about the first 264 or so bytes of the block (regardless of its
+size).
 
 Finding and parsing the SuperBlock, then, amounts to jumping to offset 1024 on
-the disk and plugging in the read values into a SuperBlock structure. We will
-use a {\tt shift} function to effectively reset the ``first'' offset in the
-disk @todo. The values to be stored are largely encoded as little endian byte
-sequences, so we will make frequent use of an unsigned conversion function,
-{\tt seq\_lendu}. While we omit most of the fields, the function looks
-something like:
+the disk and plugging in the read values into a SuperBlock structure. To make
+our lives a tad easier, we will use a {\tt shift} function, which effectively
+shifts the beginning of a disk by serving as a layer of indirection when
+pulling bytes from the disk. This wrapper allows us to parse as if the 1024th
+index were at position zero.
+
+The values we need to store to construct a SuperBlock are largely encoded as
+little endian, 4-byte integers. To parse this sequence of bytes into a more
+usable integer, we will make frequent use of an unsigned conversion function,
+{\tt seq\_lendu}. This function simply reads in a sequence of bytes from the
+disk starting at a position (as given by the second parameter) and running for
+a specific length (as given by the third), and converts that into an integer
+based on little endian semantics. Note that in this code sample, we omit most
+of the SuperBlock's fields (there are roughly 45) as their addition should be
+clear.
 
 \begin{lstlisting}
-Definition findAndParseSuperBlock (disk: Disk): Exc SuperBlock :=
+Definition findAndParseSuperBlock (disk: Disk)
+  : Exc SuperBlock :=
   let disk := (shift disk 1024) in
   (seq_lendu disk 0 4) _flatmap_ (fun inodesCount =>
   (seq_lendu disk 4 4) _flatmap_ (fun blocksCount =>
@@ -598,38 +631,49 @@ Definition blockSize (superblock: SuperBlock) :=
 
 \subsubsection{Block Addresses}
 
-Below the level of SuperBlocks, the Ext2 file system breaks the disk into
-``blocks'' for reference purposes. Despite our use cases, in practice, rarely
-does the need to retrieve a single byte from the disk arise on its own.
-Instead, data is most often retrieved in sequential chunks, so to minimize
-bandwidth, references to specific parts of the disk are identified by ``block
-address''. These are akin to cylinders in the FAT32 file system, and the
-conversion between a block address and a byte position on the disk is
-relatively straight forward. Given the size of a block, treat the disk as an
-array of blocks and simply jump to the relevant position.
+As mentioned earlier, the Ext2 file system breaks the disk into ``blocks'' for
+reference purposes; these are akin to cylinders in the FAT32 file system. Due
+to locality of reference, in practice, the need to retrieve a single byte from
+a disk is very rare. Instead, data is most often retrieved in sequential
+chunks, which maps well to the concept of data blocks.  Depending on cache
+size, whole blocks are read at a time. These blocks are identified by their
+one-indexed ``block address'', signified by the type, BA. 
+
+To find the initial byte of a block based on its address alone, we need to
+first find the size of each block (defined in the SuperBlock.) With that, we
+can treat the disk as an array of block and simply jump to the relevant
+position.
 
 \begin{lstlisting}
-Definition ba2Offset (superblock: SuperBlock) (blockAddress: Z) :=
-  1024 (* Boot sector *)
-  (* 1-indexed *)
-  + ((blockSize superblock) * (blockAddress + 1)).
+Definition ba2Offset (superblock: SuperBlock) (blockAddress: BA)
+  := (blockSize superblock) * blockAddress.
 \end{lstlisting}
 
 \subsubsection{findAndParseGroupDescriptor}
+An array of GroupDescriptors can be found in the block following that which
+contains the SuperBlock. Depending on block size, that may mean the
+GroupDescriptors begin at block one if the block size is greater than 1024
+(and hence, the SuperBlock is part of block zero) or at block two otherwise
+(when the SuperBlock composes all of block one). 
 
-GroupDescriptors will be represented with a similar structure, though with far
-fewer fields. GroupDescriptors have 32 allocated bytes, though only 20 are
-used, and an array of all GroupDescriptors can be found in the block
-immediately following a SuperBlock. Finding a specific GroupDescriptor
-therefore requires that we first use the superblock to determine where this
-array begins, and we jump to the offset of the group that we care about within
-that array.
+GroupDescriptors will be represented by a structure similar to SuperBlocks,
+though with far fewer fields. GroupDescriptors have 32 allocated bytes, though
+only 20 are used. With this fact and knowledge of where the group descriptor
+array starts, we can jump to a particular GroupDescriptor by multiplying the
+structure's size by the index we seek. This formula needs to be modified
+slightly to account for one-based indexing, but otherwise the parsing is quite
+straight forward. As with the SuperBlock, we will shift the disk to aid our
+parsing efforts. 
 
 \begin{lstlisting}
 Definition findAndParseGroupDescriptor 
   (disk: Disk) (superblock: SuperBlock) (groupId: Z)
   : Exc GroupDescriptor :=
-  let groupBlockArrayOffset := 1024 + (blockSize superblock) in
+  let groupBlockArrayBA := if (blockSize superblock =? 1024)
+    then 2
+    else 1 in
+  let groupBlockArrayOffset := 
+    ba2Offset superblock groupBlockArrayBA in
   (* groupId is one-indexed *)
   let descriptorOffset := 32 * (groupId - 1)  in
   let disk := (shift disk (groupBlockArrayOffset 
@@ -650,13 +694,13 @@ Definition findAndParseGroupDescriptor
   )))))).
 \end{lstlisting}
 
-Two of the fields from this structure will be particularly useful, the {\tt
+Two of the fields from this structure will be particularly useful, {\tt
 inodeBitmap} and the {\tt inodeTable}. Both contain block addresses, pointing
 to the start of a sequence of inode-related data. The former is simply an
 array where each bit represents whether or not the corresponding Inode is
 allocated; this will be of great use when we are calculating deletion status.
-The latter points to an array of Inode structures, as will be described
-shortly.
+The latter points to an array of Inode structures, as described in the next
+section.
 
 \subsubsection{findAndParseInode}
 
@@ -670,7 +714,9 @@ Index}, which we do throughout this paper.
 GroupDescriptors contain a reference to the block address associated with the
 start of the Inode array. From there, we can pin point the beginning of the
 relevant Inode structure by calculating the Inode's position within the block
-group.
+group the same way we calculated GroupDescriptors -- each Inode is 128 bytes.
+Add in a one-based offset and a check that the requested Inode is valid and
+you have the {\tt findAndParseInode} function.
 
 \begin{lstlisting}
 Definition findAndParseInode (disk: Disk) 
@@ -683,7 +729,6 @@ Definition findAndParseInode (disk: Disk)
     (* Inode Table is 1-indexed *)
     let inodeIndexInTable := 
       ((inodeIndex - 1) mod superblock.(inodesPerGroup)) in
-    (* Each Inode is 128 bytes *)
     let inodePos := (ba2Offset superblock
                                groupdesc.(inodeTable))
                     + (inodeIndexInTable * 128) in
