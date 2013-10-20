@@ -65,12 +65,13 @@ keepspaces=true}
 \maketitle
 
 \begin{abstract}
-Definitions for multiple file formats, "malicious" file names, and forensic
-time lines are provided in Coq. These are combined to mimic the types of
-evidence given by independent forensics researchers in a Honeynet forensics
-competition. The Honeynet examples are then provided in the form of formal
-proofs based on these definitions. Along the way, functions for creating
-relevant data structures within Coq are also described.
+Formal definitions of multiple file formats, ``malicious'' file names, and
+event time-lines are provided in the proof-oriented language, Coq. These are
+combined to mimic the types of evidence given by independent forensics
+researchers in a forensics competition (``Honeynet''). Using the definitions,
+the evidence is proven to be consistent with provided disk images. Along the
+way, functions for parsing and manipulating relevant data structures within
+Coq are also described.
 \end{abstract}
 
 \keywords
@@ -80,33 +81,50 @@ forensics, formalization, Coq, Honeynet, Ext2
 
 After completing a lengthy customs process in the largest airport of
 burgeoning global power, you notice that your laptop appears to be running
-rather slowly. You begin to suspect that a root-kit has been installed, but
-you are uncertain how to prove this. At first, you consider using
-off-the-shelf antivirus software to find the infection. The risk of damaging
-international relations between your countries is too great when using such
-proprietary software, however. What you really need is a concrete definition
-of a root kit and evidence fitting that definition to prove that your machine
-has been attacked.
+rather slowly. You suspect that malicious software has been installed by the
+country's authorities, but are uncertain how to prove this. At first, you
+consider using off-the-shelf antivirus software to find the infection, but
+realize that the risk of damaging international relations is far too great to
+rely on the definitions within the proprietary software. What you really need
+is a concrete, standardized definition of what it means to have malware
+installed and evidence fitting that definition to prove that your machine has
+been invaded.
 
-This scenario is the ultimate goal of the research provided in this paper. We
-need formal (we will use the Coq programming language) definitions for various
-types of evidence needed by forensics analysts. We will also need a way to
-convert real data (e.g. from a disk image) into these definitions. Combining
-these two ideas, we can provide concrete {\em proofs} regarding whether or not
-a particular image fits such a definition; in the above example, we could
-provide a {\em proof} that a root-kit was installed.
+This scenario and others like it (though, perhaps more mundane) are the
+ultimate goal of the research provided in this paper. To achieve that, we need
+formal definitions for various types of evidence needed by forensics analysts.
+We also need a way to convert real data (e.g. from a disk image) into these
+definitions such that we can provide concrete {\em proofs} showing that a
+particular image does or does not fit such a definition. In the above example,
+we could provide a {\em proof} that the disk image satisfied a definition of
+``malware installation''. 
 
 To guide our search, we will focus on the evidence structures and proofs
 described by several independent researchers studying a ``Honeynet''
 challenge. The Honeynet Project\cite{honeynet}'s now-defunct {\it Scan of the
 Month} series provided researchers a disk image attained from a compromised
 honeypot (a computer created with the explicit goal of catching malware for
-inspection.) Each month, they were challenged to describe what happened to the
-system and provide evidence for their conclusions. We will consider one
-specific example\cite{honeynet-15}, in which a rootkit was installed on a
-server and the security community was asked to recover the rootkit, prove that
-it had been installed, and provide a step-by-step writeup describing how the
+inspection.) Each month, participants were challenged to describe what
+happened to the system and provide evidence for their conclusions. We will
+consider one specific contest\cite{honeynet-15}, in which a rootkit
+(replacement system programs that hide malicious activity) was installed on a
+server. The security community was asked to recover the rootkit, prove that it
+had been installed, and provide a step-by-step writeup describing how the
 rootkit was found.
+
+We will describe our definitions, code our parsers, and implement our evidence
+in the proof-oriented language, Coq. While this language lives in the
+ML-family of programming languages, we will augment it with several functional
+and object-oriented notations. Using Coq allows us to formalize our proofs and
+definitions, but significantly restricts the practicality of our efforts; we
+will expand on these limitations throughout the paper.
+
+By the end of this write-up, we will have provided definitions used by some of
+the Honeynet contestants. These include definitions of tar files,
+malicious-looking file names, file deletion (on the Ext2 file system), as well
+as a time line of events which would be consistent with rootkit installation.
+Given portions of the same disk provided to those researchers, we will also
+present proofs that it satisfies these definitions.
 
 \section{Getting Our Feet Wet with File Types}
 
@@ -114,16 +132,16 @@ We start by considering a relatively straight-forward request: defining what
 it means for a given file to be a JPEG. How can we formalize this notion? One
 tact (used by many operating systems) is to rely on the file extension (if
 present) -- in this case, checking for either {\tt jpg} or {\tt jpeg}. This is
-a very loose definition, however, as malicious users would need give their
+a very loose definition, however, as malicious users need only give their
 files a different extension to avoid detection. We could instead review the
 JPEG spec and confirm that all of the meta data contained within this file is
 consistent with said spec. This approach runs the opposite end of the
 spectrum, requiring significantly more evidence. Further, the JPEG spec is not
-as tidy as we might hope, and most applications are lenient with the file
-formats they accept.
+as tidy as we might hope; most applications are lenient with the file formats
+they accept and messy with the files they write.
 
 Instead, we will chose a middle route, opting to use ``magic numbers'' as our
-guide. This refers to tell-tale byte values at predictable points within the
+guide. This refers to tell-tale byte values at predictable offsets within the
 file data. These file signatures are {\it relatively} unique to various file
 formats, so we will use them in our definitions and add additional checks as
 necessary. JPEGs happen to always start with the bytes {\tt ff d8} and end
@@ -131,8 +149,7 @@ with {\tt ff d9}. Similarly, gzipped files begin with {\tt 1f 8b 08} and Linux
 executables (ELFs) begin with {\tt 7f 45 4c 46} ({\tt 7f} E L F).
 
 If we represent each byte as a positive integer, then writing these
-definitions in the proof-centric language of Coq (plus some syntactic sugar)
-would look like
+definitions in Coq (plus some Pythonic syntactic sugar) would look like
 
 \begin{lstlisting}
 Definition isJpeg (file: File) :=
@@ -142,24 +159,25 @@ Definition isJpeg (file: File) :=
   /\ file @[ -1 ] = value 217.
 
 Definition isGzip (file: File) :=
-     file @[ 0 ] = value 31
-  /\ file @[ 1 ] = value 139 
-  /\ file @[ 2 ] = value 8.
+     file @[  0 ] = value 31
+  /\ file @[  1 ] = value 139 
+  /\ file @[  2 ] = value 8.
 
 Definition isElf (file: File) :=
-     file @[ 0 ] = value 127
-  /\ file @[ 1 ] = value 69 
-  /\ file @[ 2 ] = value 76
-  /\ file @[ 3 ] = value 70.
+     file @[  0 ] = value 127
+  /\ file @[  1 ] = value 69 
+  /\ file @[  2 ] = value 76
+  /\ file @[  3 ] = value 70.
 \end{lstlisting}
 
 For each definition, the first (and, in the case of the JPEG, last) bytes of a
-file must both be present (as indicated by {\tt value}) and equal to the byte
-sequences described above. We will discuss the absence of byte values later,
-but for now, assume that this accounts for ``missing'' evidence. By defining
-file types in this manner, we can use these definition as building block
-within larger definitions and within proofs. For example, given these
-definitions, we can {\it prove} that JPEG files cannot also be gzipped files:
+file must both be present (as indicated by {\tt value}) and equal to the
+unsigned byte values shown. We will discuss the absence of byte values later,
+but for now, assume that this accounts for ``missing'' evidence which might
+arise if a disk were damaged or inconsistent. By defining file types in this
+manner, we can use these definition as building blocks within larger
+definitions and within proofs. For example, we can now {\it prove} that JPEG
+files cannot also be gzipped files:
 
 \begin{lstlisting}
 Lemma jpeg_is_not_gzip : forall (file: File),
@@ -169,7 +187,7 @@ Lemma jpeg_is_not_gzip : forall (file: File),
 A full version of this proof (and others mentioned throughout this paper) is
 provided in the appendix.
 
-\section{Expanding Definitions with Honeynet Examples}
+\section{Bird's Eye View of a Honeynet Proof}
 
 Let's now consider the Honeynet {\it Scan of the Month} mentioned in the
 introduction. In his entry for this contest, Matt 
@@ -188,20 +206,19 @@ Lemma borland_honeynet_file:
      /\ looksLikeRootkit filename.
 \end{lstlisting}
 
-That's a bit of a mouthful, but we are stating there exists a deleted, gzipped
-file on the Honeynet disk image such that, when we unzip the file, the
-contained tar includes a malicious-looking file name. Note that both the
-Honeynet image and the unzipping operation are appended with `{\tt \_a}',
-which we will use to indicate ``assumption''. We will discuss assumptions in
-detail momentarily; we can treat them as another type of definition until
-then. We would instead prefer to focus on each of the definitions in the and
-clause (save {\tt isGzip}, which has already been described).
+That's a bit of a mouthful; we are stating that there exists a deleted,
+gzipped file on the Honeynet disk image such that, when we unzip that file,
+the contained tar includes a malicious-looking file name. For the remainder of
+this section, we will dive deeper into each of the definitions in the ``and''
+clause (save {\tt isGzip}, which we have already described.) Section 5 will
+investigate this evidence even closer, and include a description of the
+assumptions (as indicated by {\tt \_a}.)
 
 \subsection{isOnDisk}
 
 How might we define that a file "exists" on a particular disk image? For a
 simple definition, we could start by claiming a ``file'' is on a disk image if
-that file's contents could be found sequentially in the disk. In other words,
+that file's contents could be found sequentially on the disk. In other words,
 we might consider the file to be on disk if we can find a starting index on
 the disk such that every byte afterwards matches that of the file.
 
@@ -214,48 +231,55 @@ Definition isOnDiskTry1 (file: File) (disk: Disk):
 
 This definition isn't very useful in practice, however, as files are very
 often fragmented across multiple segments of a disk image. Moreover, this
-definition would also include false positives, where a ``file'' is formed by
+definition includes many false positives, where a ``file'' is formed by
 looking at the bits that span a fragment boundary. Files are stored on disks
 via file systems, which make no sequential guarantees (particularly in recent
-file systems such as ZFS and Btrfs).
+file systems such as ZFS and Btrfs). On spinning hard drives, the need to
+``defragment'' arises from the segmentation of files over non-adjacent sectors
+on disk; moving the fragments to be adjacent improves read performance by
+reducing the times the drive head must skip around.
 
-We must therefore, build our definition for file existence with file systems
-in mind. Proving that a file exists within each type of file system is a
-relatively unique operation, however. As a result, we will define file
-existence as the disjunction of file existence within each file system. While
-the definitions are distinct, they each tend to follow the pattern that there
-exists some file identifier such that if we were to parse the file associated
-with that identifier on the given disk, we would find a file identical to the
-provided file.
+As sequential access will not do, we must build our definition for file
+existence with file systems in mind. Proving that a file exists within each
+type of file system is a relatively unique operation, however, so we will
+define file existence as the disjunction of file existence within each file
+system. While the definitions are distinct, they each tend to follow the
+pattern that there exists some file identifier such that if we were to parse
+the file associated with that identifier on the given disk, we would find a
+file identical to the provided file.
 
 \begin{lstlisting}
 Definition isOnDisk (file: File) (disk: Disk):
   (* Ext2 *)
   (exists (inodeIndex: Z):
-    (Ext2.findAndParseFile disk inodeIndex) = value file)
+    fileEq (Ext2.findAndParseFile disk inodeIndex)
+           (value file))
   \/ (* FAT32 *)
   (exists (clusterNumber: Z):
-    (Fat32.findAndParseFile disk clusterNumber) 
-      = value file)
+    fileEq (Fat32.findAndParseFile disk clusterNumber) 
+           (value file))
   \/ (* Btrfs *)
   (exists (key: Z):
-    (Btrfs.findAndParseFile disk key) = value file)
+    fileEq (Btrfs.findAndParseFile disk key)
+           (value file))
   \/ ...
+.
 \end{lstlisting}
 
 The functions {\tt findAndParseFile} perform the work of inspecting the disk
 image, reading the relevant data structures, and creating an abstract
 representation of the results (in this case, a File object.) We will discuss
-parsing computations a bit later.
+parsing computations a bit later and {\tt fileEq} in the next section.
 
-\subsection{isDeleted}
+\subsection{The File Structure and isDeleted}
 
 Like existence on the disk, what it means for a file to be deleted is quite
 file system specific. In Ext2, a file might be seen as deleted if its bit in
 the allocation bitmap were zero; in FAT32, we might consider a file deleted if
-it were not accessible via a cluster chain. To account for these varieties, we
-include will include the deletion status of a File within its definition. This
-definition attempts to describe ``universal'' file truths:
+it were not accessible via a cluster chain @TODO: Confirm. To account for
+these varieties, we will include the deletion status of a File within its {\em
+definition}, allowing each file system to define the status how it wishes.
+This definition attempts to describe ``universal'' file truths:
 
 \begin{lstlisting}
 Structure File := mkFile {
@@ -266,12 +290,38 @@ Structure File := mkFile {
 \end{lstlisting}
 
 The first two fields are self-explanatory, but the third warrants additional
-explanation. This field is a function that, when given an offset within a
-file, returns the byte value found at that offset within the file. As
-described in our investigation of file types, we must account for the
-possibility that the byte requested is not available (e.g. out of range or not
-within our assumptions). We must wrap the result in an Exc (a.k.a. Option) to
-handle this situation.
+review. This field is a function that, when given an offset within a file,
+returns the byte value found at that offset within the file. As described in
+our investigation of file types, we must account for the possibility that the
+byte requested is not available (e.g. out of range or not within our
+assumptions), so we must wrap the result in an Exc (a.k.a. Option).
+
+\begin{lstlisting}
+Definition ByteData := Z -> Exc Z.
+\end{lstlisting}
+
+Given the definition of Files, we can describe {\tt fileEq}, our first
+work-around required by our language choice. We cannot rely on native equality
+because we want the {\tt byteOffset} field to be flexible enough to allow for
+complex, partially applied functions. While we want to define equality of such
+functions as pairwise mappings between input and output, Coq would attempt to
+normalize them before comparing. The functions we will use are too large (when
+normalized) for Coq to handle in a reasonable time frame. Instead, we will use
+a custom relationship, {\tt fileEq}, which operates on two {\tt Exc File}s,
+and holds if the simple fields match and if, for all file offsets, the bytes
+returned by {\tt byteOffset} match.
+
+\begin{lstlisting}
+Definition fileEq (lhs rhs: Exc File) :=
+  match (lhs, rhs) with
+  | (error, error) => True
+  | (value lhs, value rhs) =>
+      lhs.(fileSize) = rhs.(fileSize)
+      /\ lhs.(deleted) = rhs.(deleted)
+      /\ forall idx:Z, lhs @[ idx ] = rhs @[ idx ]
+  | _ => False
+  end.
+\end{lstlisting}
 
 Coming back to goal, it should be easy to see that the definition of {\tt
 isDeleted} effectively just delegates to the boolean value that is part of the
@@ -285,24 +335,22 @@ Definition isDeleted (file: File) :=
 \subsection{Malicious Filenames}
 
 The final clause in our lemma states that one of the filenames contained in
-the gzipped-tar is suspicious. We start with  another assumption, in this case
-the decompression algorithm for gzipped files; while we try to keep as many of
-our computations within Coq as possible, some (like unzipping a file) were far
-out of scope, so we keep them as assumptions. Once the file is unzipped, we
-run another parsing computation, {\tt Tar.parseFileNames}, this time
-retrieving all of the file names contained within the unzipped tar.
+the gzipped-tar is suspicious. We will describe the {\tt gunzip\_a} assumption
+shortly; for now, know that it is a representation of a decompression
+algorithm for gzipped files. Once the file is unzipped, we run a parsing
+computation, {\tt Tar.parseFileNames}, which retrieves a list of all of the
+file names contained within the unzipped tar.
 
-The only new {\it definition} is that of {\tt looksLikeRootkit}. For the sake
-of this definition, we will define that a filename looks like a filename
-involved in a rootkit if that filename, excluding its path prefix, matches any
-of a predefined list of system files. These include task managers such as {\tt
-top} and {\tt ProcMon.exe}, which root kits replace to hide their activities,
-as well as {\tt ssh} and {\tt rsync}, which root kits replace to allow them
-the ability to monitor traffic. We treat file names as lists of bytes to
-account for unicode and other non-ascii characters which would be excluded by
-Coq's string/ascii package.
+The only new {\it definition} is that of {\tt looksLikeRootkit}. We will say
+that a filename looks like one involved in a rootkit if it, excluding its path
+prefix, matches any of a predefined list of system files. These include task
+managers such as {\tt top} and {\tt ProcMon.exe}, which rootkits replace to
+hide their activities, as well as {\tt ssh} and {\tt rsync}, which grants them
+the ability to monitory network traffic.
 
 \begin{lstlisting}
+Definition ByteString := list Z.
+
 Definition looksLikeRootkit (fileName: ByteString):
   In (trimFileNamePrefix fileName) 
      (map ascii2Bytes ("ps" :: "netstat" :: "top" :: "ifconfig" 
@@ -310,33 +358,51 @@ Definition looksLikeRootkit (fileName: ByteString):
                        :: nil)).
 \end{lstlisting}
 
-Note that, for ease of description, we provide file names as ascii strings and
-then convert each to their equivalent, byte representation via the {\tt
-ascii2Bytes} function.
+We treat file names as lists of bytes to account for unicode and other
+non-ASCII characters which would be excluded by Coq's string/ascii package.
+For the ease of description, however, we write ``malicious-looking'' file
+names in ASCII, and convert them all into ByteStrings via the {\tt
+ascii2Bytes} function, described in section 5.5
 
-Use of this definition is straight forward:
+Use of this definition is straight forward; full proof tactics are available
+in the appendix.
 
 \begin{lstlisting}
-Lemma rootkit_ex1 : looksLikeRootkit (ascii2Bytes "last/top").
+Lemma rootkit_ex1 : 
+  looksLikeRootkit (ascii2Bytes "last/top").
 
 Lemma rootkit_ex2 : 
   ~(looksLikeRootkit (ascii2Bytes "last/example.txt")).
 \end{lstlisting}
 
-\section{Lemmas, Computations, and Definitions; Oh My!}
+\subsection{Summary}
+
+We have now described (at a high level) {\tt isOnDisk}, {\tt isDeleted},
+{\tt isGzip}, and {\tt looksLikeRootkit} enough that we could see why Borland
+proposed them as definitions of evidence for a rootkit installation. This is
+not complete, however, as we skipped over several critical parsing and
+computation functions which we will expand on in section 5. Before describing
+these functions, we should clarify the relationships between some of the
+concepts we are proposing; this is the focus of the next section.
+
+\section{Lemmas, Computations, Definitions; Oh My!}
 
 We have now come across several core concepts of this research, and it is easy
 to see how they might be confused. Before we continue, let us solidify our
 understanding of each category.
 
 We are most familiar with {\bf definitions}, which provide a name for a common
-understanding of a concept. For example, we provided definitions for {\tt
-isGzip}, {\tt looksLikeRootkit}, etc. The wider goal of this research is to
-provide a set of common definitions for concepts pertinent to the forensics
-community. This paper describes several which are relevant to the Honeynet
-example, but other definitions might include ``web page access'' (e.g. by
-inspecting browser history), ``in contact with'' (e.g. there exists records of
-email communication), and ``last time logged in''.
+understanding of a forensics concept. For example, we provided definitions for
+{\tt isGzip}, {\tt looksLikeRootkit}, etc. While one of the wider goals of
+this research is to provide a set of such common definitions, this paper only
+describes several which are relevant to the Honeynet example. Other
+definitions might include ``web page access'' (e.g. by inspecting browser
+history), ``in contact with'' (e.g. there exists records of email
+communication), and ``last time logged in.'' Note that definitions are, at
+their core, the choice of their creators; forming a consensus on a definition
+is the only way it may provide authority. This also means that the possibility
+for multiple definitions is present (as we have shown with our two definitions
+for file existence.)
 
 Definitions are most often built by combining aspects of various abstract {\bf
 data structures}, ``universal'' representations of data-related concepts
@@ -1371,8 +1437,6 @@ deletion events imply the associated file is deleted, that files can exist
 which are not addressable, or any number of other proofs and lemmas. These
 would then make proofs about particular disk images even easier to apply.
 
-\appendix
-
 \acks
 First, I wish to thank my colleagues at DePaul, including Malik Aldubayan,
 Iana Boneva, Christina Ionides, Daria Manukian, Matthew McDonald, and Charles
@@ -1419,5 +1483,36 @@ at least a few days.
 
 \end{thebibliography}
 
+\appendix
+
+\section{JPEG Files Are Not Gzips}
+\begin{lstlisting}
+Lemma jpeg_is_not_gzip : forall (file: File),
+  (isJpeg file) -> ~ (isGzip file).
+Proof.
+  unfold isGzip, isJpeg.
+  intros file jpeg_asmpt.
+  destruct jpeg_asmpt as [byte0_is_255]. rewrite byte0_is_255.
+  unfold not. intros contra. destruct contra as [not_equal].
+  discriminate not_equal.
+Qed.
+\end{lstlisting}
+
+\section{Looks Like Rootkit Examples}
+\begin{lstlisting}
+Lemma rootkit_ex1 : 
+  looksLikeRootkit (ascii2Bytes "last/top").
+Proof.
+  compute. right. right. left. reflexivity.
+Qed.
+
+Lemma rootkit_ex2 : 
+  ~(looksLikeRootkit (ascii2Bytes "last/example.txt")).
+Proof.
+  compute. intro.
+  repeat (destruct H; [ inversion H | ]).
+  apply H.
+Qed.
+\end{lstlisting}
 
 \end{document}
