@@ -408,53 +408,59 @@ Definitions are most often built by combining aspects of various abstract {\bf
 data structures}, ``universal'' representations of data-related concepts
 within forensics. We have seen these used to represent files, and we will see
 them represent various Ext2 file system structures, as well as events in a
-reconstructed timeline. These structures serve as a way of differentiating
+reconstructed timeline. These structures serve as a way of separating
 particular parsing computations (which build the structures) from definitions
-involving these structures. It should be relatively simple for someone to
-write a different parsing algorithm which produces the same structures without
-affecting any of the definitions.
+involving the structures. While not complete, this division allows us to
+reason about our definitions using only the data representations, not the
+parsing algorithms. It should be relatively simple for someone to write a
+different parser which produces the same structures without affecting many of
+the definitions.
 
-Unfortunately, the Coq proof environment is quite limited with regards to
-practical applications. It cannot, for example, read bytes from a disk image;
-it cannot (for our intents) call external programs to transform data; it
-cannot even instantiate a list of tens of thousands of values. We work around
-these limitations by making {\bf assumptions} about our environment (with the
-suffix {\tt \_a}) which entail only the relevant pieces of data needed for our
-proofs. We won't read a file from disk; instead, we will generate a {\it
-sparse} map to represent that disk, including only the offsets we care about.
-Assumptions are also used to account for transformations that would normally
-be performed by a trusted, external program. We cannot, for instance, run
-``gunzip'', nor do we want to try to implement that algorithm within Coq.
-Instead, we require an assumption be made that encompasses that activity. Our
-proofs cannot validate that {\tt disk\_a} or {\tt gunzip\_a} accurately
-represent values on the disk or the output of an unzipping operation -- they
-instead trust those assumptions to be accurate and rely on users for
-verification.
+Due to Coq's proof-oriented nature, we have found several limitations that
+need to be worked around in our implementation. Coq programs cannot, for
+example, read bytes from a disk image; they cannot (for our intents) call
+external programs to transform data; they cannot even instantiate a list of
+tens of thousands of values. We work around these limitations by making {\bf
+assumptions} about our environment (with the suffix {\tt \_a}) which entail
+only the relevant pieces of data needed for our proofs. We won't read a file
+from disk; instead, we will generate a {\it sparse} map to represent that
+disk, including only the offsets we care about.  Assumptions are also used to
+account for transformations that would normally be performed by a trusted,
+external program. We cannot, for instance, run ``gunzip'', nor do we want to
+try to implement that algorithm within Coq.  Instead, we require an assumption
+be made that encompasses that activity. Our proofs cannot validate that {\tt
+disk\_a} or {\tt gunzip\_a} accurately represent values on the disk or an
+unzipping function -- they instead trust those assumptions to be accurate and
+rely on users for verification. We will describe the assumptions made for our
+Honeynet example in detail in section 5.2.
 
 Where possible, we do attempt to {\bf parse} and/or {\bf compute} values
 within Coq. Here we have codified algorithms which take the bytes from disk
 (assumptions) and convert them into relevant structures. This might mean
 creating Inodes, SuperBlocks, and GroupDescriptors for a disk with Ext2 on it,
-or reading headers from the data associated with an abstract tar file. In all
-cases, these operations are our (perhaps flawed) implementations of various
-specifications; users should feel free to check the structures created against
-those found using other tools. Ultimately, we aimed to provide definitions and
-data structures which could serve as building blocks for proofs; parsing and
-computations are simply the glue that tie those building blocks to actual
-data.
+reading file names from a tar archive, generating modify-access-create times
+for Inodes, or creating ``sub-tars'' why striping off the first file's
+information. In all cases, these operations are our (perhaps flawed)
+implementations of various specifications; users should feel free to check the
+structures created against those found using other tools. Ultimately, we aimed
+to provide definitions and data structures which could serve as building
+blocks for proofs; parsing and computations are simply the glue that tie those
+building blocks to actual data.
 
-The Honeynet competition we've described required researchers to provide
-``{\bf evidence}'' or ``proof'' that the disk had been compromised by a
+The Honeynet competition we have described required researchers provide
+``{\bf evidence}'' or ``{\bf proof}'' that the disk had been compromised by a
 rootkit. This required that the researchers both define what acceptable
-evidence would look like as well as provide it the evidence regarding the
-attacked server. This led each researcher to provide different types of
-evidence depending on what that researcher found to be acceptable. While we
-could create definitions for the various types of evidence, we will instead
-follow the Honeynet applicants' lead and provide only the evidence itself in
-the form of a {\bf lemma} or proof. This evidence will be in the form of a
-proof term, which the author of the proof can build up using Coq's tactic
-system. It is then up to the reviewer to determine whether or not the evidence
-provided by an applicant fits a familiar definition.
+evidence would look like as well as provide that type of evidence for the
+attacked server. This led each researcher to give different forms of evidence
+depending on what that researcher found to be acceptable. The types of
+evidence provided are codified in our definitions (as described above), but
+the evidence they gave maps closer to a Coq {\bf lemma} or proof. The evidence
+will be in the form of a proof term, which the author of a proof can build up
+using Coq's tactic system. Given a proof that the disk satisfies the
+definitions provided, it is only up to a reviewer to determine whether or not
+the {\em definitions} are satisfactory. We provide a list of tactics that
+generate the proof term for each of our lemmas in the appendix (and online),
+and we will expand the implications of this topic further, in section 7.
 
 Finally, the code written for this research is sprinkled with {\bf utility
 functions} to perform (mostly) simple transformations. {\tt
@@ -465,26 +471,27 @@ appear; they simply make the code more terse.
 
 \section{Computing Our First Lemma}
 
-Not that we have introduced each of these concepts, let's step through our
+Now that we have introduced each of these concepts, let's step through our
 {\tt borland\_honeynet\_file} proof, which will touch on each.
 
 \subsection{A Note on Functional Idioms}
 
-Particularly while parsing, we will make use of several idioms from functional
-programming. In particular, we make heavy use of the ``option'' pattern; as
-the parsing code does not know whether bytes will be {\em present} on the
-provided disk image, each attempt to read returns an {\em option} of the
+While parsing, we will make use of several idioms from functional programming.
+In particular, we make heavy use of the ``option'' pattern; due to the sparse
+map that we use to represent the disk, the parsing code does not know whether
+bytes will be present. Each attempt to read returns an {\em option} of the
 result. An option is simply a wrapper around a value such that the wrapper may
-be contain the value (indicated by {\tt value} or {\tt Some}), or may not
-contain the value (indicated by {\tt error} or {\tt None}). This is why the
-return type of many functions is {\tt Exc A}; this indicates an option of type
-{\tt A}.
+contain the value (indicated by {\tt value} or {\tt Some}), or may not contain
+the value (indicated by {\tt error} or {\tt None}).  This is why the return
+type of many functions is {\tt Exc A}, indicating an option of type {\tt A}. 
 
-Options make error handling ``percolate up'' in that functions which produce
-options can be chained such that any error results in the entire computation
-being an error. To get to this point be define two functions, indicated by the
-infix notation {\tt \_map\_} and {\tt \_flatmap\_}. The function signatures
-for each should aid their explanation.
+The benefit of wrapping the value in the monadic option is that we can
+continue computation without knowing (in advance) whether a sub-computation
+was successful or not. Options make error handling ``percolate up'' in that
+functions which produce options can be chained such that any error causes the
+entire computation to result in an error. To get to this point, we define two
+functions, indicated by the infix notation {\tt \_map\_} and {\tt
+\_flatmap\_}. The function signatures for each should aid their explanation.
 
 \begin{lstlisting}
 Definition opt_map {A B: Type} (opt: Exc A) (fn: A -> B)
@@ -494,11 +501,13 @@ Definition flatmap {A B: Type} (opt: Exc A) (fn: A -> Exc B)
   : Exc B.
 \end{lstlisting}
 
-The role of {\tt \_map\_}, then, is to transform the contents of an option. If
-the option is empty, map has no effect. {\tt \_flatmap\_} similarly does not
-affect empty options, but performs a bit differently with {\tt values}.
-Instead of simply transforming the contents, the entire option gets replaced
-with the result of {\tt fn}, allowing sequences like
+The role of {\tt \_map\_}, then, is to transform the contents of an option, if
+present. If the option is empty, map has no effect. {\tt \_flatmap\_}
+similarly does not affect empty options. However, if a value is present, the
+provided function ({\tt fn}) is applied and the option is replaced with that
+function's result. In other words, {\tt \_flatmap\_} is like applying a {\tt
+\_map\_} and then stripping the outer {\tt Exc}. These functions allow
+sequences like
 
 \begin{lstlisting}
   (file @[ 0 ]) _flatmap_ (fun byte0 =>
@@ -508,15 +517,15 @@ with the result of {\tt fn}, allowing sequences like
   )))
 \end{lstlisting}
 
-which can return either {\tt error} or {\tt value } with all three bytes
-present. If the first byte was not present, the outer-most {\tt \_flatmap\_}
+which can return either {\tt error} or {\tt value (Z, Z, Z)} (all three bytes
+present.) If the first byte was not present, the outer-most {\tt \_flatmap\_}
 would not have executed the inner function. Similarly, if the second byte were
 not present, the function including {\tt \_map\_} would not be ran, and if the
 third byte were unavailable, the function with the parameter {\tt byte2} would
 not be evaluated.
 
-We've rushed through these concepts as we assume the reader has some
-background in functional programming. For a more thorough (yet brief and
+We have rushed through these concepts as we assume the reader has some
+background in functional programming. For a more thorough (yet still brief and
 practical) introduction, see Wamper \& Miller\cite{scala}.
 
 \subsection{Assumptions}
@@ -525,25 +534,55 @@ Disk} and {\tt gunzip\_a}, a function, {\tt File->File}. The {\tt Disk} type
 is used to represent a disk image throughout our definitions and proofs.
 Technically, they are functions from {\tt Z} to {\tt Exc Z}, acting as
 byte-retrieval mechanism; give a {\tt Disk} an offset, and it will respond
-with the byte value (a {\tt Z}) at that offset in the disk image, or {\tt
-error} if no such byte exists on the disk. Generally, disk data is backed by
-an in-memory mapping via Coq's {\tt FMapAVL} trees, and must be generated from
-the true disk values. Due to Coq's limitations on data structure sizes, we
-only populate these maps with essential values; once the map reaches a few
-thousand entries, it will no longer be usable within Coq.
+with the byte value (a {\tt value Z}) at that offset in the disk image, or
+{\tt error} if no such byte exists on the disk. Generally, disk data is backed
+by an in-memory mapping via Coq's {\tt FMapAVL} trees, and must be generated
+from the true disk values. Due to Coq's limitations on data structure sizes,
+we only populate these maps with essential values; once the map reaches a few
+thousand entries, it will no longer be usable within Coq. We leave a full
+accounting of the disk bytes to our code (see the comments in {\tt
+example\_images.v} for an explanation of why each byte ranges are included).
 
-The second assumption represents gzip's unzipping/deflating operation. As
-implementing the decompression algorithm used within Coq would not provide
-particularly valuable information, we instead delegate its operation to an
+\begin{lstlisting}
+Definition honeynet_map := 
+[ 
+  1024 |-> 216, 
+  1025 |-> 2,
+  1026 |-> 1, 
+  1027 |-> 0, 
+  ...
+].
+
+Definition honeynet_image_a : Disk := honeynet_map.
+\end{lstlisting}
+
+The second assumption ({\tt gunzip\_a}) represents gzip's unzipping/deflating
+operation. As implementing the decompression algorithm within Coq would not be
+particularly useful to our study, we instead delegate its operation to an
 assumption. This assumption needs to be able to convert a compressed, gzip
 file into the corresponding, uncompressed file, which effectively means
 providing a new {\tt File} populated with the relevant bytes. In our example,
 we used the {\it Sleuth Kit}'s {\tt icat} program to pull inode {\tt 23}'s
 contents from the disk image, ran {\tt gunzip} on the resulting {\tt tgz}
 file, and then pulled the relevant bytes (i.e. those necessary from the tar
-file headers). We effectively just wrap this data in a function that,
-regardless of {\tt File} input, returns the uncompressed, tar {\tt File}.
+file headers) into a {\tt FMapAVL}. We effectively just wrap this data in a
+function that, regardless of {\tt File} input, returns the uncompressed file
+data. Note: {\tt find} is an operation to reach into a {\tt FMapAVL}.
 
+\begin{lstlisting}
+Definition gunzipped_23 := 
+[ 
+  0 |-> 108, 
+  1 |-> 97, 
+  2 |-> 115, 
+  ...
+].
+
+Definition gunzip_a := (fun (input: File) => 
+  (mkFile 1454080 (* uncompressed file size *)
+          input.(deleted) 
+          (fun (offset: Z) => find offset gunzipped_23))).
+\end{lstlisting}
 
 \subsection{Parsing a File via INode}
 
@@ -555,7 +594,7 @@ of functions) to retrieve this file and provide it as demonstrative proof.
 Ultimately, we will need to call
 
 \begin{lstlisting}
-(Ext2.findAndParseFile honeynet_image_a 23)
+Ext2.findAndParseFile honeynet_image_a 23
 \end{lstlisting}
 
 To be confident in this function's results, however, we will need to
@@ -565,39 +604,41 @@ pealing off each layer of the call and review the constructed data structures.
 \subsubsection{findAndParseFile}
 
 At the outermost conceptual layer, we have a function which, when given a disk
-and Ext2 Inode identifier, returns either an error or a valid File structure
-associated with that file. As we discussed earlier, a {\tt File} is composed
-of a deletion status, a file size, and a function that retrieves bytes within
-the file. These fields require we first parse out the {\tt SuperBlock} of the
-disk and the {\tt GroupDescriptor} and {\tt Inode} associated with our index
-({\tt 23}).
+and Ext2 Inode identifier, returns either an {\tt error} or a valid {\tt File}
+structure associated with that file. As we discussed earlier, a {\tt File} is
+composed of a file size, deletion status, and a function that retrieves bytes
+within the file. These fields require we first parse out the {\tt SuperBlock}
+of the disk as well as the {\tt GroupDescriptor} and {\tt Inode} associated
+with our Inode index ({\tt 23}).
 
 To understand what these structures mean, one must first learn how Ext2 is
 structured. At its core, the file system is composed of a sequence of
 equally-sized chunks of bytes (called ``blocks''). Files are not necessarily
-stored on sequential (or even contiguous) blocks; their data may be parcelled
+stored on contiguous (or even in-order) blocks; their data may be parcelled
 throughout the disk image (as we will describe when discussing Inodes, below).
 Each file is referenced by a single ``Inode'' structure, which keeps track of
 the file's data locations as well as access times, file size, and other meta
 data. Inodes are collected into ``groups'', which have meta data stored in a
 ``Group Descriptor''. 
 
-This descriptor includes information about which Inodes are allocated, etc. as
-well as provides a mechanism to segment the administration of Inodes. We can
-easily compute which group a particular Inode index belongs to by dividing it
-by the number of inodes per group. We can compute the Inode's position within
-that group by taking the remainder of this division (i.e. by applying the
-mod). It's important to note for both of these operations that Inode indices
-are one-indexed, as are group descriptors; this will lead to some additions
-and subtractions of one throughout our code to convert between zero- (which is
-easier to compute on) and one-based indices.
+This descriptor includes information about which Inodes are allocated and
+other meta data as well as provides a mechanism to segment the administration
+of Inodes. We can easily compute to which group a particular Inode index
+belongs by dividing it by the number of inodes per group. We can also compute
+the Inode's position within that group by taking the remainder of this
+division (i.e. by applying mod). It's important to note for both of these
+operations that Inode indices are one-indexed, as are block addresses; this
+will lead to some additions and subtractions by one throughout our code to
+convert between zero- (with which it is easier to compute) and one-based
+indices.
 
 Meta data about the file system as a whole is stored in a special block known
 as the ``SuperBlock'', which lives at a predictable position on the disk. The
 SuperBlock contains information such as how large each block is, where the
 collection of GroupDescriptors starts, and the number of Inodes per group.
 While we do not use this fact, the SuperBlock is usually stored redundantly on
-the disk, meaning we could verify its values with the copies.
+the disk, meaning we could verify its values with some of the redundant
+copies.
 
 Returning to our parsing efforts we must note that each attempt to pull out a
 SuperBlock, GroupDescriptor, etc. may fail, and if this occurs, we want the
@@ -610,7 +651,7 @@ Definition findAndParseFile (disk: Disk) (inodeIndex: Z)
   : Exc File :=
   (findAndParseSuperBlock disk) _flatmap_ (fun superblock =>
   let groupId := ((inodeIndex - 1) (* One-indexed *)
-                  / superblock.(inodesPerGroup)) + 1 in
+                  / superblock.(inodesPerGroup)) in
   let inodeIndexInGroup := 
     (inodeIndex - 1) mod superblock.(inodesPerGroup) in
   (findAndParseGroupDescriptor disk superblock groupId) 
@@ -641,8 +682,14 @@ Finding and parsing the SuperBlock, then, amounts to jumping to offset 1024 on
 the disk and plugging in the read values into a SuperBlock structure. To make
 our lives a tad easier, we will use a {\tt shift} function, which effectively
 shifts the beginning of a disk by serving as a layer of indirection when
-pulling bytes from the disk. This wrapper allows us to parse as if the 1024th
-index were at position zero.
+requesting bytes. This wrapper allows us to parse as if the 1024th index were
+at position zero.
+
+\begin{lstlisting}
+Definition shift (bytes: ByteData) (shiftAmount index: Z)
+  : Exc Z :=
+  bytes (shiftAmount + index).
+\end{lstlisting}
 
 The values we need to store to construct a SuperBlock are largely encoded as
 little endian, 4-byte integers. To parse this sequence of bytes into a more
@@ -650,9 +697,11 @@ usable integer, we will make frequent use of an unsigned conversion function,
 {\tt seq\_lendu}. This function simply reads in a sequence of bytes from the
 disk starting at a position (as given by the second parameter) and running for
 a specific length (as given by the third), and converts that into an integer
-based on little endian semantics. Note that in this code sample, we omit most
-of the SuperBlock's fields (there are roughly 45) as their addition should be
-clear.
+based on little endian semantics. 
+
+With that, we can show our SuperBlock-parsing function. Note that in this code
+sample, we omit most of the SuperBlock's fields (there are roughly 45) as
+their addition should be clear.
 
 \begin{lstlisting}
 Definition findAndParseSuperBlock (disk: Disk)
@@ -660,13 +709,11 @@ Definition findAndParseSuperBlock (disk: Disk)
   let disk := (shift disk 1024) in
   (seq_lendu disk 0 4) _flatmap_ (fun inodesCount =>
   (seq_lendu disk 4 4) _flatmap_ (fun blocksCount =>
-  (seq_lendu disk 8 4) _flatmap_ (fun rBlocksCount =>
   (* ... Additional fields omitted ... *)
   (seq_lendu disk 260 4) _map_ (fun firstMetaBg =>
     mkSuperBlock
       inodesCount
       blocksCount
-      rBlocksCount
       (* ... Additional fields omitted ... *)
       firstMetaBg
   ))))))))))))))))))))))))))))))))))))))))))))).
@@ -676,10 +723,10 @@ While we parse out virtually all of the fields of a SuperBlock, we will need
 only a handful. {\tt inodesCount} provides an upper bound for inode indices
 (which we use to validate that a given inode exists). {\tt inodesPerGroup}
 will appear several times in this paper; the field indicates the number of
-inodes assigned to each GroupDescriptor. Hence, that field provides a way to
-determine which GroupDescriptor is needed for a particular inode index. The
+inodes assigned to each GroupDescriptor. That field therefore provides a way
+to determine which GroupDescriptor is needed for a particular inode index. The
 {\tt logBlockSize} field is also of interest, as we will use it to determine
-the number of bytes each block on disk spans. This is encoded using the
+the number of bytes each block spans on disk. This is encoded using the
 logarithmic scale, but we provide a simple function to convert to the true
 number of bytes.
 
@@ -691,16 +738,17 @@ Definition blockSize (superblock: SuperBlock) :=
 \subsubsection{Block Addresses}
 
 As mentioned earlier, the Ext2 file system breaks the disk into ``blocks'' for
-reference purposes; these are akin to cylinders in the FAT32 file system. Due
-to locality of reference, in practice, the need to retrieve a single byte from
-a disk is very rare. Instead, data is most often retrieved in sequential
-chunks, which maps well to the concept of data blocks.  Depending on cache
-size, whole blocks are read at a time. These blocks are identified by their
-one-indexed ``block address'', signified by the type, BA. 
+reference purposes; these are akin to cylinders in the FAT32 file system
+@TODO: Check. Due to locality of reference, in practice, the need to retrieve
+a single byte from a disk is very rare. Instead, data is most often retrieved
+in sequential chunks, which maps well to the concept of data blocks.
+Depending on cache size, whole blocks are read at a time. These blocks are
+identified by their one-indexed ``block address'', signified by the type, {\tt
+BA}. 
 
 To find the initial byte of a block based on its address alone, we need to
 first find the size of each block (defined in the SuperBlock.) With that, we
-can treat the disk as an array of block and simply jump to the relevant
+can treat the disk as an array of blocks and simply jump to the relevant
 position.
 
 \begin{lstlisting}
@@ -710,30 +758,28 @@ Definition ba2Offset (superblock: SuperBlock) (blockAddress: BA)
 
 \subsubsection{findAndParseGroupDescriptor}
 An array of GroupDescriptors can be found in the block following that which
-contains the SuperBlock. Depending on block size, that may mean the
-GroupDescriptors begin at block one if the block size is greater than 1024
-(and hence, the SuperBlock is part of block zero) or at block two otherwise
-(when the SuperBlock composes all of block one). 
+contains the SuperBlock. If the block size is greater than 1024 (and hence,
+the SuperBlock is part of block zero), the GroupDescriptors begin at block
+one. Otherwise, the SuperBlock composes all of block one, so the
+GroupDescriptors can be found at block two.
 
 GroupDescriptors will be represented by a structure similar to SuperBlocks,
-though with far fewer fields. GroupDescriptors have 32 allocated bytes, though
+though with far fewer fields. GroupDescriptors have 32 allocated bytes, yet
 only 20 are used. With this fact and knowledge of where the group descriptor
 array starts, we can jump to a particular GroupDescriptor by multiplying the
-structure's size by the index we seek. This formula needs to be modified
-slightly to account for one-based indexing, but otherwise the parsing is quite
-straight forward. As with the SuperBlock, we will shift the disk to aid our
-parsing efforts. 
+structure's size by the index we seek. As with the SuperBlock, we will shift
+the disk to aid our parsing efforts; unlike SuperBlock, GroupDescriptors are
+small enough that we will include their full parsing code here.
 
 \begin{lstlisting}
 Definition findAndParseGroupDescriptor 
   (disk: Disk) (superblock: SuperBlock) (groupId: Z)
   : Exc GroupDescriptor :=
-  let groupBlockArrayBA := if (blockSize superblock =? 1024)
-    then 2 else 1 in
+  let groupBlockArrayBA := if (blockSize superblock >=? 1024)
+    then 1 else 2 in
   let groupBlockArrayOffset := 
     ba2Offset superblock groupBlockArrayBA in
-  (* groupId is one-indexed *)
-  let descriptorOffset := 32 * (groupId - 1)  in
+  let descriptorOffset := 32 * groupId  in
   let disk := (shift disk (groupBlockArrayOffset 
                            + descriptorOffset)) in
   (seq_lendu disk 0 4) _flatmap_ (fun blockBitmap =>
@@ -753,9 +799,9 @@ Definition findAndParseGroupDescriptor
 \end{lstlisting}
 
 Two of the fields from this structure will be particularly useful, {\tt
-inodeBitmap} and the {\tt inodeTable}. Both contain block addresses, pointing
-to the start of a sequence of inode-related data. The former is simply an
-array where each bit represents whether or not the corresponding Inode is
+inodeBitmap} and the {\tt inodeTable}. Both contain block addresses pointing
+to the start of a sequence of inode-related data. The former is simply a bit
+sequence where each bit represents whether or not the corresponding Inode is
 allocated; this will be of great use when we are calculating deletion status.
 The latter points to an array of Inode structures, as described in the next
 section.
@@ -766,15 +812,16 @@ Ext2 tracks meta information about specific files through ``Inode''
 structures. One such data structure exists for each file and contains copious
 information relevant to our interests, including creation time, deletion time,
 and references to the data blocks which make up this file. As each file has a
-unique Inode within the Inode array, we can refer to files by their {\it Inode
-Index}, which we do throughout this paper.
+unique Inode within the Inode array, we can refer to files by their ``Inode
+Index'', which we do throughout this paper. As mentioned before, Inode indices
+are one-indexed, with the first Inode associated with index 1.
 
 GroupDescriptors contain a reference to the block address associated with the
 start of the Inode array. From there, we can pin point the beginning of the
 relevant Inode structure by calculating the Inode's position within the block
-group the same way we calculated GroupDescriptors -- each Inode is 128 bytes.
-Add in a one-based offset and a check that the requested Inode is valid and
-you have the {\tt findAndParseInode} function.
+group the same way we calculated GroupDescriptors -- we know that Inodes are
+128-byte data structures.  Add in a one-based offset and a check that the
+requested Inode is valid and you have the {\tt findAndParseInode} function.
 
 \begin{lstlisting}
 Definition findAndParseInode (disk: Disk) 
@@ -792,10 +839,8 @@ Definition findAndParseInode (disk: Disk)
                      + (inodeIndexInTable * 128) in
     let disk := (shift disk inodePos) in
     (seq_lendu disk 0 2) _flatmap_ (fun mode =>
-    (seq_lendu disk 2 2) _flatmap_ (fun uid =>
     (* ... Additional fields omitted ... *)
     (seq_lendu disk 40 4) _flatmap_ (fun directBlock1 =>
-    (seq_lendu disk 44 4) _flatmap_ (fun directBlock2 =>
     (* ... Additional direct blocks omitted *)
     (seq_lendu disk 84 4) _flatmap_ (fun directBlock12 =>
     (seq_lendu disk 88 4) _flatmap_ (fun indirectBlock =>
@@ -805,7 +850,6 @@ Definition findAndParseInode (disk: Disk)
     (seq_lendu disk 116 4) _map_ (fun osd2 =>
       mkInode
         mode
-        uid
         (* ... Additional fields omitted ... *)
         (directBlock1 :: directBlock2 :: directBlock3
           :: directBlock4 :: directBlock5 :: directBlock6
@@ -818,23 +862,33 @@ Definition findAndParseInode (disk: Disk)
     )))))))))))))))))))))))))))))))).
 \end{lstlisting}
 
+This code sample highlights the twelve ``direct block'' pointers and three
+indirection pointers, which we combine into a list, making the {\tt block}
+field (keeping with Poirier's conventions.) Ext2 was designed with a trade-off
+in mind; quick access to file data generally runs counter to the desire to
+store very large files.  The solution the file system employs is to allow the
+first twelve data blocks to be directly addressable from the Inode. Slightly
+larger files can be addressed through an indirection pointer, which points to
+a block which in turn points to several blocks of data. Even larger files can
+be addressed through a double-indirection pointer, which points to a block
+which points to other blocks which each contain references to additional data
+blocks. There is also a third level of indirection, allowing Ext2 to address
+up to roughly sixteen million data blocks.
 
 \subsubsection{parseDeleted}
 With the Inode, we know the first attribute of our File object, the file size.
 We next turn to the second field, whether or not the file is marked as
-deleted, or ``unallocated''. To find the allocation status of an Inode, we'll
-need to find the associated allocation bitmap (a sequence of bits on disk such
-that zero indicated unallocated and one indicates allocated.) The bitmap
-associated with a particular Inode is indicated in that Inode's
-GroupDescriptor. As we are reading entire bytes at once, we'll read the byte
-which contains the allocation bit for the Inode we care about and then test
-the bit within the read byte.
+deleted, or ``unallocated''. To find the allocation status of an Inode, we
+will need to find the associated allocation bitmap. As mentioned above, the
+bitmap associated with a particular Inode is indicated in that Inode's
+GroupDescriptor. As we are only reading whole bytes at a time, we will read
+the byte that contains the allocation bit for the Inode we care about and then
+test the bit (1, allocated, translates to true; 0 to false) within that byte.
 
 Ultimately, this means we will find the start of the allocation bitmap from
 the GroupDescriptor, jump to the byte within that bitmap which contains the
 allocation of our Inode, and then test the bit within that byte. As noted
 before, we need to be weary of the fact that Inodes are one-indexed.
-
 
 \begin{lstlisting}
 Definition parseDeleted (disk: Disk) (superblock: SuperBlock)
@@ -854,41 +908,21 @@ Definition parseDeleted (disk: Disk) (superblock: SuperBlock)
 \end{lstlisting}
 
 \subsubsection{fetchInodeByte}
-With the deletion status and file size, we need only more more attribute to
+
+With the file size and deletion status, we need only more more attribute to
 create our File structure. File objects have a method which, given an
-arbitrary offset within the File, returns the associated byte within the File,
-effectively linearizing byte access. This abstraction is quite necessary as
-each File system will have a different method of accessing the File bytes. We
-now discuss how such a method works on Ext2.
+arbitrary offset, returns the associated byte within the File, effectively
+linearizing byte access. This abstraction is quite necessary as each File
+system will have a different method of accessing the File bytes.
 
-Ext2 was designed with a trade-off in mind; quick access to file data
-generally runs counter to the desire to store very large files. The solution
-the file system employs is to allow the first twelve data blocks to be
-directly addressable from the Inode. Slightly larger files can be addressed
-through an indirection pointer, which points to a block which in turn points
-to several blocks of data. Even larger files can be addressed through a
-double-indirection pointer, which points to a block which points to other
-blocks which each contain references to additional data blocks. There is also
-a third level of indirection, allowing Ext2 to address up to roughly sixteen
-million data blocks.
-
-This means that determining which block a given byte within a file is located
-in may require walking one or more indirection blocks. As this is a recursive
-operation (depending on the level of indirection,) we next describe a fixpoint
-which will pull out the block address associated with a given byte. This
-function checks if it has reached the final level of indirection, as indicated
-by the {\tt O} (Coq's zero) case; if so, it knows to grab the correct block
-address (a four byte value) from the block of pointers.
-
-If the function has not reached its base case ({\tt S}, the ``successor of''),
-it determines which of its block addresses to follow, reduces the block number
-requested accordingly, and recursively tries again. To select the correct
-block address to recursively follow, we must determine how many blocks each
-indirection pointer is responsible for ({\tt unitSizeInBlocks}), and select
-the index of the block address within the array accordingly ({\tt
-nextBlockIndex}). Using that, and the fact that each address is four bytes
-large, we jump to the correct offset within the pointer array, read those four
-bytes, and recurse accordingly.
+Remembering the structure of Ext2 Inodes, we know that determining which data
+block a given byte of a file is located in may require walking one or more
+levels of indirection. As this is a recursive operation (depending on the
+level of indirection,) we next describe a fixpoint which will pull out the
+block address associated with a given byte. This function checks if it has
+reached the final level of indirection, as indicated by the {\tt O} (Coq's
+zero) case; if so, it knows to grab the correct block address (a four byte
+value) from the block of pointers.
 
 \begin{lstlisting}
 Fixpoint walkIndirection (disk: Disk) (superblock: SuperBlock)
@@ -898,7 +932,24 @@ Fixpoint walkIndirection (disk: Disk) (superblock: SuperBlock)
   | O => 
     let bytePosition := (indirectionPos + 4 * blockNumber) in
     (seq_lendu disk bytePosition 4)
+  ...
+\end{lstlisting}
+
+If the function has not reached its base case (as indicated by {\tt S}, the
+``successor of''), it determines which of its block addresses to follow,
+reduces the block number requested accordingly, and recursively tries again.
+To select the correct block address to recursively follow, we must determine
+how many blocks each indirection pointer is responsible for ({\tt
+unitSizeInBlocks}), and select the index of the block address within the array
+accordingly ({\tt nextBlockIndex}). Using that, and the fact that each address
+is four bytes large, we jump to the correct offset within the pointer array,
+read those four bytes, and recurse accordingly.
+
+\begin{lstlisting}
+Fixpoint walkIndirection (disk: Disk) (superblock: SuperBlock)
+  ...
   | S nextIndirectionLevel =>
+    (* Type conversion *)
     let exponent := Z.of_nat indirectionLevel in
     let unitSizeInBlocks := 
       ((blockSize superblock) ^ exponent) / (4 ^ exponent) in
@@ -918,7 +969,8 @@ Fixpoint walkIndirection (disk: Disk) (superblock: SuperBlock)
 Building on top of this fixpoint, we can define a single function that, when
 given a Disk, SuperBlock, Inode and offset, returns the byte within the
 associated file at that offset. We destruct the function in to three parts.
-First, we check if the byte requested is within the file.
+First, we check if the byte requested is within the file; if not, we
+immediately {\tt error}.
 
 \begin{lstlisting}
 Definition fetchInodeByte (disk: Disk) (superblock: SuperBlock)
@@ -929,23 +981,40 @@ Definition fetchInodeByte (disk: Disk) (superblock: SuperBlock)
     ...
 \end{lstlisting}
 
-Next, we determine the block address using the recursive function we described
-above. Depending on the byte position requested, the block address which of
-the data block which will contain it may be either directly addressable (in
-which case we grab the address from the Inode's list), or we may need to use
-one of the indirection blocks.
+Next, we determine the block address using the recursive function described
+above. We begin by noting bounds on which data blocks are addressable directly
+and at the levels of indirection.
+
 \begin{lstlisting}
+Definition fetchInodeByte (disk: Disk) (superblock: SuperBlock)
     ...
     let blockSize := (blockSize superblock) in
     let blockNumInFile := bytePos / blockSize in
     let directAddressable := 12 in
     let indirect1Addressable := blockSize / 4 in
     let indirect2Addressable := (blockSize * blockSize) / 16 in
+    ...
+\end{lstlisting}
 
+How we attain the block address of the data depends on the byte requested. If
+the byte is in the first 12 data blocks, we have immediate access to the block
+address from the Inode's {\tt block} list.
+
+\begin{lstlisting}
+Definition fetchInodeByte (disk: Disk) (superblock: SuperBlock)
+    ...
     let blockAddress :=
     (if blockNumInFile <? directAddressable then
       nth_error inode.(block) (Z.to_nat blockNumInFile)
+    ...
+\end{lstlisting}
 
+If, instead, the block falls within the range of the first indirection block,
+we need to call our {\tt walkIndirection} function.
+
+\begin{lstlisting}
+Definition fetchInodeByte (disk: Disk) (superblock: SuperBlock)
+    ...
      else if blockNumInFile <? directAddressable
                                + indirect1Addressable then
       (nth_error inode.(block) 12) 
@@ -955,7 +1024,16 @@ one of the indirection blocks.
           (ba2Offset superblock indirectBlock) 
           O
         )
+    ...
+\end{lstlisting}
 
+If the block falls within the range of the double indirection block, we call
+{\tt walkIndirection} with an additional level. Everything else falls to the
+triple indirection block.
+
+\begin{lstlisting}
+Definition fetchInodeByte (disk: Disk) (superblock: SuperBlock)
+    ...
     else if blockNumInFile <? directAddressable
                               + indirect1Addressable
                               + indirect2Addressable then
@@ -967,9 +1045,9 @@ one of the indirection blocks.
           (ba2Offset superblock doubleIndirectBlock)
           (S O)
         )
-
-    else (nth_error inode.(block) 14) 
-      _flatmap_ (fun tripleIndirectBlock =>
+    else 
+      (nth_error inode.(block) 14) 
+        _flatmap_ (fun tripleIndirectBlock =>
         walkIndirection disk superblock 
           (blockNumInFile - directAddressable
                           - indirect1Addressable
@@ -986,9 +1064,12 @@ the actual byte requested. We determine this simply by taking the byte
 position requested modulo the size of each data block.
 
 \begin{lstlisting}
+Definition fetchInodeByte (disk: Disk) (superblock: SuperBlock)
     ...
+    let blockAddress := (
+      ...
+    ) in
     blockAddress _flatmap_ (fun blockAddress =>
-      (* With the block address, get the individual byte *)
       disk ((ba2Offset superblock blockAddress) 
             + (bytePos mod blockSize))
     ).
@@ -997,15 +1078,17 @@ position requested modulo the size of each data block.
 With this function, we have completed each of the components needed to
 represent a file structure. Putting them together (via {\tt mkFile}) allows us
 to use that file as the evidence needed for much of {\tt
-bordland\_honeynet\_file}. In particularly, we know how to prove that the file
+borland\_honeynet\_file}. In particularly, we know how to prove that the file
 {\tt isOnDisk} (if we can provide an Inode Index that matches it), that it the
 file {\tt isDeleted} (if the deleted flag is set), and that the file {\tt
 isGzip} (if the first three bytes are those of a Gzip.)
+
 
 All that's left is to prove that there exists some filename within the gzipped
 tar that {\tt looksLikeRootkit}.
 
 \begin{lstlisting}
+Lemma borland_honeynet_file:
   ...
   /\ exists (filename: ByteString),
      (In filename (Tar.parseFileNames (gunzip_a file)))
@@ -1022,21 +1105,24 @@ function to access their data, we need not worry about underlying file system
 mechanics.
 
 A tar file is composed of a sequence of (header, file content) pairs such that
-the header meta data about the file (including its name, size, owner, etc.)
-and the file data is padded to a multiple of 512 bytes. To retrieve all of the
-file names contained within a tar, we will need to read the ``next'' file name
-from the tar header, read the file size from that header, skip the file
-contents and start again with the following header.
+the header contains meta data about the file (including its name, size, owner,
+etc.) and the file data is padded to a multiple of 512 bytes. To retrieve all
+of the file names contained within a tar, we will need to read the ``first''
+file name from the tar header, read the file size from that header, skip the
+file contents and start again with the following header.
 
 \subsubsection{File Size from ASCII Octal}
-File size can be determined by reading the 11 bytes starting at offset 124 of
-the tar header. The size is first encoded into octal, which is then
-represented as ASCII characters. Scratching your head yet? We implement this
-with a simple recursive function which reads the next byte from a list,
-converts that into the encoded integer value. The value is multiplied by 8
-raised to the length of rest of the list to account for octal order of
-magnitude. If the byte does not fall into the range associated with ascii `0'
-through `7', an {\tt error} is returned.
+File size of a file within a tar can be determined by reading the 11 bytes
+starting at offset 124 of the tar header. The size is first encoded into
+octal, which is then represented as ASCII characters. Encoding in ASCII stems
+from the desire to keep the header human readable; the choice of octal is a
+bit more dubious, but {\it c'est la vie}. We implement our parsing with a
+simple recursive function which reads the next byte from a list and converts
+that into the encoded integer value. The value is multiplied by 8 raised to
+the length of rest of the list to account for octal order of magnitude. If the
+byte does not fall into the range associated with ascii `0' through `7', an
+{\tt error} is returned as anything else does not fit our encoding
+expectations.
 
 \begin{lstlisting}
 Fixpoint fromOctalAscii (bytes: list Z) : Exc Z :=
@@ -1061,12 +1147,19 @@ there, we will add three new functional idioms: {\tt upto}, {\tt flatten}, and
 create a sequence of integers between the provided end points; we skip its
 definition as it involves too much Coq-specific inside baseball. Similar to
 our need for {\tt \_flatmap\_}, {\tt flatten} takes a list of options and
-converts them to a list of the options' contents. Finally {\tt takeWhile} is a
-function that takes two parameters, a boolean predicate and a list of
-elements. This function returns the longest prefix of that list such that
-every element satisfies the predicate.
+converts them to a list of the options' contents, skipping any {\tt error}s.
+Finally {\tt takeWhile} is a function that takes two parameters, a boolean
+predicate and a list of elements. This function returns the longest prefix of
+that list such that every element in the prefix satisfies the predicate.
 
 \begin{lstlisting}
+Fixpoint flatten {A} (lst: list (Exc A)): list A :=
+  match lst with
+    | (value head) :: tail => head :: (flatten tail)
+    | error :: tail => flatten tail
+    | nil => nil
+  end.
+
 Fixpoint takeWhile {A} (predicate: A->bool) (lst: list A)
   : list A :=
   match lst with
@@ -1076,23 +1169,17 @@ Fixpoint takeWhile {A} (predicate: A->bool) (lst: list A)
     else nil
   | nil => nil
 end.
-
-Fixpoint flatten {A} (lst: list (Exc A)): list A :=
-  match lst with
-    | (value head) :: tail => head :: (flatten tail)
-    | error :: tail => flatten tail
-    | nil => nil
-  end.
 \end{lstlisting}
 
 \subsubsection{Parsing a Single Header}
 Next, we will write a function that can both pull out the first filename from
-a tar, but also pull out the first file. Retrieving the file name requires
+a tar as well as the first file's contents. Retrieving the file name requires
 reading the first hundred bytes of the tar and taking every character until a
 null is read. Due to our abstract concept of a file, extracting the first file
 from the tar is relatively straight forward. We need only parse the file size
-(as described above), carry over the deleted status of the parent tar file,
-and drop the tar header from the data to create a File object.
+(making use of a sequence reader, {\tt seq\_list}), carry over the deleted
+status of the parent tar file, and drop the tar header from the data to create
+a File object.
 
 \begin{lstlisting}
 Definition parseFirstFileNameAndFile (tar: File)
@@ -1100,9 +1187,9 @@ Definition parseFirstFileNameAndFile (tar: File)
   let firstHundredBytes := map tar.(data) (0 upto 100) in
   let fileName := flatten (takeWhile 
     (fun (byte: Exc Z) => match byte with
-      | error => false
-      | value 0 => false
-      | value _ => true
+      | error =>   false (* stop *)
+      | value 0 => false (* stop *)
+      | value _ => true  (* continue *)
     end) firstHundredBytes) in
   (seq_list tar.(data) 124 11) 
     _flatmap_ (fun fileSizeList =>
@@ -1123,8 +1210,9 @@ minus the first file) with each step. We need to strip off the initial file
 header (512 bytes) plus the file size padded to 512 bytes. We won't use a
 fixpoint, opting instead for a parameter ({\tt nextCall}) to signify the
 recursive call; this is required by {\tt N.peano\_rect}, a library function
-which allows for recursive calls over binary numbers. To see the full
-definition of {\tt Tar.parseFileNames}, please see the source code.
+which allows for recursive calls over binary numbers (including our {\tt Z}).
+To see the full definition of {\tt Tar.parseFileNames}, please see the source
+code.
 
 \begin{lstlisting}
 Definition recFileNameFrom (nextCall: File -> list ByteString) 
@@ -1150,9 +1238,10 @@ Definition recFileNameFrom (nextCall: File -> list ByteString)
 
 \subsection{Computing Over File Names}
 Now that we have pulled the list of file names from the tar file, we want the
-ability to prove that at least one {\tt looksLikeRootkit}. As we discussed
-before, this means that we want to compare the file name's suffix with one of
-a set of file names:
+ability to prove that at least one satisfies {\tt looksLikeRootkit}. As we
+discussed before, this means that we want to compare the file name (sans
+directory) with a set of names associated with rootkits. As a proof of
+concept, the list provided is slim, but it would be quite simple to extend it.
 
 \begin{lstlisting}
 Definition looksLikeRootkit (fileName: ByteString) :=
@@ -1163,7 +1252,7 @@ Definition looksLikeRootkit (fileName: ByteString) :=
 \end{lstlisting}
 
 The {\tt ascii2Bytes} function simply converts each Coq ASCII character into a
-corresponding {\tt Z} to represent that as a byte. We use the functional {\tt
+corresponding {\tt Z} to represent it as a byte. We use the functional {\tt
 map} idiom to run this function an every element of the list of Coq strings.
 
 \begin{lstlisting}
@@ -1188,8 +1277,8 @@ Definition trimFileNamePrefix (fileName: ByteString)
   let reversedName := rev fileName in
   rev (takeWhile 
         (fun (char: Z) => 
-          (negb (orb (char =? 47)    (* '/' *)
-                     (char =? 92)))) (* '\' *)
+          (negb (orb (char =? 47)    (* `/' *)
+                     (char =? 92)))) (* `\' *)
         reversedName).
 \end{lstlisting}
 
@@ -1197,21 +1286,20 @@ With that, we have described all of the components needed to compute our
 lemma. We leave the details of the proof to our code samples, but at the high
 level, one can imagine how proving {\tt borland\_honeynet\_file} need only
 require we provide a File (by parsing it from the disk) as evidence. We can
-more or less compute each of the properties from that file.
+more or less compute each of the properties based on that file.
 
 \section{Timelines as Evidence}
 
 A second type of evidence provided by the Honeynet researchers (particularly
-from Jason Lee\cite{lee}) was in the form of a timeline of events to explain
+from Jason Lee\cite{lee}) had the form of a timeline of events to explain
 what the researchers believed happened to the infected server. A timeline is
 simply an ordered sequence of events; examples of events include file
 modification, user login, system restart, etc. Timelines are certainly useful
-as a form of evidence as they provide a narrative of what took place, but they
-are also provable artifacts, as a timeline is only sound as long as there is
+as a form of evidence as they provide a narrative of what took place. They are
+also provable artifacts, as a timeline is only sound as long as there is
 evidence for each of the events and if the order of those events can be
-verified. In this case, we say that the events are in the correct sequence if
-events earlier in the sequence are {\tt beforeOrConcurrent} with events later
-in the sequence.
+verified. We consider events as in the correct sequence if events earlier in
+the sequence are {\tt beforeOrConcurrent} with events later in the sequence.
 
 \begin{lstlisting}
 Definition isSound (timeline: Timeline) (disk: Disk) :=
@@ -1294,19 +1382,24 @@ modification, change, or deletion time match that of the event.
 \begin{lstlisting}
 Definition foundOn (event: Event) (disk: Disk) : Prop :=
   match (inodeIndexOf event) _flatmap_ (fun inodeIndex =>
-    (ext2_inode_from disk inodeIndex) _map_ (fun inode =>
-      match event with
-      | FileAccess timestamp _ => 
-        inode.(accessTime) = timestamp
-      | FileModification timestamp _ => 
-        inode.(modificationTime) = timestamp
-      | FileCreation timestamp _ => 
-        inode.(changeTime) = timestamp
-      | FileDeletion timestamp _ => 
-        inode.(deletionTime) = timestamp
-      end
-    )
-  ) with
+  (findAndParseSuperBlock disk) _flatmap_ (fun superblock =>
+  let groupId := 
+    ((inodeIndex - 1) / superblock.(inodesPerGroup)) + 1 in
+  (findAndParseGroupDescriptor disk superblock groupId)
+    _flatmap_ (fun groupdesc =>
+  (findAndParseInode disk superblock groupdesc inodeIndex) 
+    _map_ (fun inode =>
+    match event with
+    | FileAccess timestamp _ => 
+        inode.(atime) = timestamp
+    | FileModification timestamp _ => 
+        inode.(mtime) = timestamp
+    | FileCreation timestamp _ => 
+        inode.(ctime) = timestamp
+    | FileDeletion timestamp _ => 
+        inode.(dtime) = timestamp
+    end
+  )))) with
   | error => False
   | value prop => prop
   end.
@@ -1512,6 +1605,91 @@ Proof.
   compute. intro.
   repeat (destruct H; [ inversion H | ]).
   apply H.
+Qed.
+\end{lstlisting}
+
+\section{Borland Example}
+\begin{lstlisting}
+Lemma flip_not_equal: forall (x y:Exc File),
+  x <> y -> y <> x.
+Proof.
+  auto.
+Qed.
+
+Lemma deleted_means_value: 
+  forall (disk:Disk) (inodeIndex: Z), 
+    parseFileDeleted disk inodeIndex <> error 
+    -> findAndParseFile disk inodeIndex <> error.
+Proof.
+  intros disk inodeIndex.
+  unfold parseFileDeleted.
+  unfold findAndParseFile.
+  destruct (findAndParseSuperBlock disk) ; [|simpl; auto].
+  simpl.
+  destruct (findAndParseGroupDescriptor disk s 
+              ((inodeIndex - 1) / inodesPerGroup s + 1)); 
+    [|simpl; auto]. simpl.
+  destruct (findAndParseInode disk s g inodeIndex); 
+    [|simpl; auto]. simpl.
+  destruct (parseDeleted disk s g inodeIndex); [|simpl; auto]. 
+  simpl.
+  intros _. discriminate.
+Qed.
+
+Lemma borland_honeynet_file:
+  exists (file: File),
+  (isOnDisk file honeynet_image_a)
+  /\ isDeleted file
+  /\ isGzip file
+  /\ exists (filename: ByteString),
+     (In filename (Tar.parseFileNames (gunzip_a file)))
+     /\ looksLikeRootkit filename.
+Proof.
+  remember (findAndParseFile honeynet_image_a 23).
+  destruct e; [ | contradict Heqe; apply flip_not_equal; 
+      apply deleted_means_value; vm_compute; discriminate].
+  exists f.
+  split. 
+    (* isOnDisk *)
+    unfold isOnDisk. exists 23.
+    unfold fileEq. symmetry in Heqe. rewrite Heqe.
+    simpl. repeat (split ;[reflexivity|] ).
+    intros. reflexivity.
+
+  split.
+    (* isDeleted *)
+    unfold isDeleted.
+    assert ((findAndParseFile honeynet_image_a 23) _map_ 
+            (fun f => f.(deleted)) = value true).
+    vm_compute. reflexivity.
+    rewrite <- Heqe in H.
+    simpl in H. injection H. auto.
+
+  split.
+    (* isGzip *)
+    unfold isGzip. 
+    split.
+      assert ((findAndParseFile honeynet_image_a 23) _flatmap_
+              (fun f => f @[ 0 ]) = value 31).
+      vm_compute. reflexivity.
+      rewrite <- Heqe in H. simpl in H. apply H.
+    split.
+      assert ((findAndParseFile honeynet_image_a 23) _flatmap_
+              (fun f => f @[ 1 ]) = value 139).
+      vm_compute. reflexivity.
+      rewrite <- Heqe in H. simpl in H. apply H.
+
+      assert ((findAndParseFile honeynet_image_a 23) _flatmap_
+              (fun f => f @[ 2 ]) = value 8).
+      vm_compute. reflexivity.
+      rewrite <- Heqe in H. simpl in H. apply H.
+      
+    (* tar contains a file that looks like a root kit *)
+    exists (ascii2Bytes "last/ssh").
+    split.
+      vm_compute. repeat (try (left; reflexivity) ; right).
+
+      vm_compute. repeat (try (left; reflexivity) ; right).
 Qed.
 \end{lstlisting}
 
