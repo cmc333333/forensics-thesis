@@ -65,13 +65,13 @@ keepspaces=true}
 \maketitle
 
 \begin{abstract}
-Formal definitions of multiple file formats, ``malicious'' file names, and
-event time-lines are provided in the proof-oriented language, Coq. These are
+Formal definitions of multiple file formats, ``rootkit-like'' tar files, and
+event timelines are provided in the proof-oriented language, Coq. These are
 combined to mimic the types of evidence given by independent forensics
-researchers in a forensics competition (``Honeynet''). Using the definitions,
-the evidence is proven to be consistent with provided disk images. Along the
-way, functions for parsing and manipulating relevant data structures within
-Coq are also described.
+researchers in a forensics competition (``Honeynet''). Using said definitions,
+the evidence is proven to be consistent with the disk image provided for the
+relevant competition. Along the way, functions for parsing and manipulating
+relevant data structures within Coq are also described.
 \end{abstract}
 
 \keywords
@@ -92,12 +92,12 @@ been invaded.
 
 This scenario and others like it (though, perhaps more mundane) are the
 ultimate goal of the research provided in this paper. To achieve that, we need
-formal definitions for various types of evidence needed by forensics analysts.
-We also need a way to convert real data (e.g. from a disk image) into these
+formal definitions for various types of evidence used by forensics analysts.
+We also require a way to convert real data (e.g. from a disk image) into these
 definitions such that we can provide concrete {\em proofs} showing that a
 particular image does or does not fit such a definition. In the above example,
-we could provide a {\em proof} that the disk image satisfied a definition of
-``malware installation''. 
+we could provide a verifiable proof that the disk image satisfied a definition
+of ``malware installation''. 
 
 To guide our search, we will focus on the evidence structures and proofs
 described by several independent researchers studying a ``Honeynet''
@@ -120,11 +120,11 @@ definitions, but significantly restricts the practicality of our efforts; we
 will expand on these limitations throughout the paper.
 
 By the end of this write-up, we will have provided definitions used by some of
-the Honeynet contestants. These include definitions of tar files,
-malicious-looking file names, file deletion (on the Ext2 file system), as well
-as a time line of events which would be consistent with rootkit installation.
-Given portions of the same disk provided to those researchers, we will also
-present proofs that it satisfies these definitions.
+the Honeynet contestants. These include definitions of tar files, rootkit-like
+archives, file deletion (on the Ext2 file system), as well as a timeline of
+events which would be consistent with rootkit installation.  Given portions of
+the same disk provided to those researchers, we will also present proofs that
+satisfy these definitions.
 
 \section{Getting Our Feet Wet with File Types}
 
@@ -149,7 +149,7 @@ with {\tt ff d9}. Similarly, gzipped files begin with {\tt 1f 8b 08} and Linux
 executables (ELFs) begin with {\tt 7f 45 4c 46} ({\tt 7f} E L F).
 
 If we represent each byte as a positive integer, then writing these
-definitions in Coq (plus some Pythonic syntactic sugar) would look like
+definitions in Coq (plus some Python-like syntactic sugar) would look like
 
 \begin{lstlisting}
 Definition isJpeg (file: File) :=
@@ -184,8 +184,8 @@ Lemma jpeg_is_not_gzip : forall (file: File),
   (isJpeg file) -> ~(isGzip file).
 \end{lstlisting}
 
-A full version of this proof (and others mentioned throughout this paper) is
-provided in the appendix.
+The tactics used to satisfy this proof (and others mentioned throughout this
+paper) can be found in the code referenced in the appendix.
 
 \section{Bird's Eye View of a Honeynet Proof}
 
@@ -201,18 +201,16 @@ Lemma borland_honeynet_file:
   (isOnDisk file honeynet_image_a)
   /\ isDeleted file
   /\ isGzip file
-  /\ exists (filename: ByteString),
-     (In filename (Tar.parseFileNames (gunzip_a file)))
-     /\ looksLikeRootkit filename.
+  /\ Tar.looksLikeRootkit (gunzip_a file).
 \end{lstlisting}
 
 That's a bit of a mouthful; we are stating that there exists a deleted,
 gzipped file on the Honeynet disk image such that, when we unzip that file,
-the contained tar includes a malicious-looking file name. For the remainder of
-this section, we will dive deeper into each of the definitions in the ``and''
-clause (save {\tt isGzip}, which we have already described.) Section 5 will
-investigate this evidence even closer, and include a description of the
-assumptions (as indicated by {\tt \_a}.)
+the contained tar looks like a rootkit. For the remainder of this section, we
+will dive deeper into each of the definitions in the ``and'' clause (save {\tt
+isGzip}, which we have already described.) Section 5 will investigate this
+evidence even closer, and include a description of the assumptions (as
+indicated by {\tt \_a}.)
 
 \subsection{isOnDisk}
 
@@ -230,23 +228,23 @@ Definition isOnDiskTry1 (file: File) (disk: Disk):
 \end{lstlisting}
 
 This definition isn't very useful in practice, however, as files are very
-often fragmented across multiple segments of a disk image. Moreover, this
-definition includes many false positives, where a ``file'' is formed by
-looking at the bits that span a fragment boundary. Files are stored on disks
-via file systems, which make no sequential guarantees (particularly in recent
-file systems such as ZFS and Btrfs). On spinning hard drives, the need to
-``defragment'' arises from the segmentation of files over non-adjacent sectors
-on disk; moving the fragments to be adjacent improves read performance by
-reducing the times the drive head must skip around.
+often fragmented across multiple, disjoint segments of a disk image. Moreover,
+this definition has high potential for false positives, where a ``file'' is
+formed by looking at the bits that span a fragment boundary but are not part
+of the same byte sequence. Files are stored on disks via file systems, which
+make no sequential guarantees (particularly in recent file systems such as ZFS
+and Btrfs). On spinning hard drives, the need to ``defragment'' arises from
+the segmentation of files over non-adjacent sectors on disk; moving the
+fragments to be adjacent improves read performance by reducing the times the
+drive head must skip around.
 
 As sequential access will not do, we must build our definition for file
 existence with file systems in mind. Proving that a file exists within each
 type of file system is a relatively unique operation, however, so we will
 define file existence as the disjunction of file existence within each file
-system. While the definitions are distinct, they each tend to follow the
-pattern that there exists some file identifier such that if we were to parse
-the file associated with that identifier on the given disk, we would find a
-file identical to the provided file.
+system. While file systems are distinct, they each tend to use numeric file
+identifiers for each file on the system. Hence, for most file systems, a file
+exists if we can provide an identifier that maps to it.
 
 \begin{lstlisting}
 Definition isOnDisk (file: File) (disk: Disk):
@@ -276,25 +274,40 @@ parsing computations a bit later and {\tt fileEq} in the next section.
 Like existence on the disk, what it means for a file to be deleted is quite
 file system specific. In Ext2, a file might be seen as deleted if its bit in
 the allocation bitmap were zero; in FAT32, we might consider a file deleted if
-it were not accessible via a cluster chain @TODO: Confirm. To account for
+it were not accessible via a cluster chain or marked free. To account for
 these varieties, we will include the deletion status of a File within its {\em
 definition}, allowing each file system to define the status how it wishes.
-This definition attempts to describe ``universal'' file truths:
+This definition provides three ``universal'' fields and five ``optional''
+fields.
 
 \begin{lstlisting}
 Structure File := mkFile {
+  fileSystemId: Exc Z;
   fileSize: Z;
   deleted: bool;
-  byteOffset: ByteData
+  byteOffset: ByteData;
+  lastAccess: Exc Z;
+  lastModification: Exc Z;
+  lastCreated: Exc Z;
+  lastDeleted: Exc Z
 }.
 \end{lstlisting}
 
-The first two fields are self-explanatory, but the third warrants additional
-review. This field is a function that, when given an offset within a file,
-returns the byte value found at that offset within the file. As described in
-our investigation of file types, we must account for the possibility that the
-byte requested is not available (e.g. out of range or not within our
-assumptions), so we must wrap the result in an Exc (a.k.a. Option).
+The first field is an identifier specific to the file system that contains
+the file, e.g. the Inode Index in Ext2. This, along with the {\tt last}*
+fields might not be present in every file or in every file system, but provide
+a great deal of information when they are. We will use these fields as the
+basis for our Timeline Events at the end of this paper. As the fields might
+not be present for each file system, they are marked as optional (indicated by
+{\tt Exc}, described further in section 5.1.)
+
+The {\tt fileSize} and {\tt deleted} fields are self-explanatory, but {\tt
+byteOffset} warrants additional review. This field is a function that, when
+given an offset within a file, returns the byte value found at that offset
+within the file {\em data}. As described in our investigation of file types,
+we must account for the possibility that the byte requested is not available
+(e.g. out of range or not within our assumptions), so we must wrap the result
+in an Exc (a.k.a. Option).
 
 \begin{lstlisting}
 Definition ByteData := Z -> Exc Z.
@@ -308,7 +321,7 @@ functions as pairwise mappings between input and output, Coq would attempt to
 normalize them before comparing. The functions we will use are too large (when
 normalized) for Coq to handle in a reasonable time frame. Instead, we will use
 a custom relationship, {\tt fileEq}, which operates on two {\tt Exc File}s,
-and holds if the simple fields match and if, for all file offsets, the bytes
+and holds if the simple fields match and if, for all offsets, the bytes
 returned by {\tt byteOffset} match.
 
 \begin{lstlisting}
@@ -332,47 +345,60 @@ Definition isDeleted (file: File) :=
   file.(deleted) = true.
 \end{lstlisting}
 
-\subsection{Malicious Filenames}
+\subsection{Tars That Look Like Rootkits}
+The final clause in our lemma relies on the {\tt gunzip\_a} assumption, which
+we will describe shortly; for now, know that this is a representation of a
+decompression algorithm for the gzipped files. If we can prove that the result
+of unzipping the file satisfies the {\tt looksLikeRootkit} definition, we have
+finished our proof.
 
-The final clause in our lemma states that one of the filenames contained in
-the gzipped-tar is suspicious. We will describe the {\tt gunzip\_a} assumption
-shortly; for now, know that it is a representation of a decompression
-algorithm for gzipped files. Once the file is unzipped, we run a parsing
-computation, {\tt Tar.parseFileNames}, which retrieves a list of all of the
-file names contained within the unzipped tar.
-
-The only new {\it definition} is that of {\tt looksLikeRootkit}. We will say
-that a filename looks like one involved in a rootkit if it, excluding its path
-prefix, matches any of a predefined list of system files. These include task
-managers such as {\tt top} and {\tt ProcMon.exe}, which rootkits replace to
-hide their activities, as well as {\tt ssh} and {\tt rsync}, which grants them
-the ability to monitory network traffic.
+If we peal this definition back a layer, we will see that it requires there to
+be two distinct file names (represented as lists of bytes) that are are in the
+list of file names contained in that tar ({\tt parseFileNames}) such that the
+file names are {\tt systemFile}s. We require {\em two} file names as this
+increases the odds that the tar is malicious (rather than a legitimate
+update.)
 
 \begin{lstlisting}
 Definition ByteString := list Z.
 
-Definition looksLikeRootkit (fileName: ByteString):
-  In (trimFileNamePrefix fileName) 
+Definition looksLikeRootkit (file: File) :=
+  exists (filename1 filename2: ByteString),
+    (In filename1 (parseFileNames file))
+    /\ (In filename2 (parseFileNames file))
+    /\ (FileNames.systemFile filename1)
+    /\ (FileNames.systemFile filename2)
+    /\ filename1 <> filename2.
+\end{lstlisting}
+
+System file names are distinguished from other files in that they (excluding
+their path prefixes) are in a predefined list. This list includes task
+managers, such as {\tt top} and {\tt ProcMon.exe}, which rootkits replace to
+hide their activities, as well as {\tt ssh} and {\tt rsync}, which grants them
+the ability to monitor network traffic.
+
+\begin{lstlisting}
+Definition systemFile (fileName: ByteString) :=
+  In (trimFileNamePrefix fileName)
      (map ascii2Bytes ("ps" :: "netstat" :: "top" :: "ifconfig" 
-                       :: "ssh" :: "rsync" :: "ProcMon.exe" 
+                       :: "ssh" :: "rsync" :: "ProcMon.exe"
                        :: nil)).
 \end{lstlisting}
 
 We treat file names as lists of bytes to account for unicode and other
 non-ASCII characters which would be excluded by Coq's string/ascii package.
-For the ease of description, however, we write ``malicious-looking'' file
-names in ASCII, and convert them all into ByteStrings via the {\tt
-ascii2Bytes} function, described in section 5.5
+For the ease of description, however, we write system file names in ASCII, and
+convert them all into ByteStrings via the {\tt ascii2Bytes} function,
+described in section 5.5
 
-Use of this definition is straight forward; full proof tactics are available
-in the appendix.
+Use of this definition is straight forward:
 
 \begin{lstlisting}
-Lemma rootkit_ex1 : 
-  looksLikeRootkit (ascii2Bytes "last/top").
+Lemma systemFile_ex1 : 
+  systemFile (ascii2Bytes "last/top").
 
-Lemma rootkit_ex2 : 
-  ~(looksLikeRootkit (ascii2Bytes "last/example.txt")).
+Lemma systemFile_ex2 : 
+  ~(systemFile (ascii2Bytes "last/example.txt")).
 \end{lstlisting}
 
 \subsection{Summary}
@@ -422,8 +448,8 @@ example, read bytes from a disk image; they cannot (for our intents) call
 external programs to transform data; they cannot even instantiate a list of
 tens of thousands of values. We work around these limitations by making {\bf
 assumptions} about our environment (with the suffix {\tt \_a}) which entail
-only the relevant pieces of data needed for our proofs. We won't read a file
-from disk; instead, we will generate a {\it sparse} map to represent that
+only the relevant pieces of data needed for our proofs. We won't read a full
+disk image; instead, we will generate a {\it sparse} map to represent that
 disk, including only the offsets we care about.  Assumptions are also used to
 account for transformations that would normally be performed by a trusted,
 external program. We cannot, for instance, run ``gunzip'', nor do we want to
@@ -439,13 +465,13 @@ within Coq. Here we have codified algorithms which take the bytes from disk
 (assumptions) and convert them into relevant structures. This might mean
 creating Inodes, SuperBlocks, and GroupDescriptors for a disk with Ext2 on it,
 reading file names from a tar archive, generating modify-access-create times
-for Inodes, or creating ``sub-tars'' why striping off the first file's
-information. In all cases, these operations are our (perhaps flawed)
-implementations of various specifications; users should feel free to check the
-structures created against those found using other tools. Ultimately, we aimed
-to provide definitions and data structures which could serve as building
-blocks for proofs; parsing and computations are simply the glue that tie those
-building blocks to actual data.
+for Inodes, or creating ``sub-tars'' by striping off the first file's
+information from an archive. In all cases, these operations are our (perhaps
+flawed) implementations of various specifications; users should feel free to
+check the structures created against those found using other tools.
+Ultimately, we aimed to provide definitions and data structures which could
+serve as building blocks for proofs; parsing and computations are simply the
+glue that tie those building blocks to actual data.
 
 The Honeynet competition we have described required researchers provide
 ``{\bf evidence}'' or ``{\bf proof}'' that the disk had been compromised by a
@@ -459,8 +485,9 @@ will be in the form of a proof term, which the author of a proof can build up
 using Coq's tactic system. Given a proof that the disk satisfies the
 definitions provided, it is only up to a reviewer to determine whether or not
 the {\em definitions} are satisfactory. We provide a list of tactics that
-generate the proof term for each of our lemmas in the appendix (and online),
-and we will expand the implications of this topic further, in section 7.
+generate the proof term for each of our lemmas in the source linked to in our
+appendix, and we will expand the implications of this topic further, in
+section 7.
 
 Finally, the code written for this research is sprinkled with {\bf utility
 functions} to perform (mostly) simple transformations. {\tt
@@ -661,9 +688,14 @@ Definition findAndParseFile (disk: Disk) (inodeIndex: Z)
   (parseDeleted disk superblock groupdesc inodeIndex) 
     _map_ (fun deleted =>
     mkFile
+      (value inodeIndex)
       inode.(size)
       deleted
       (fetchInodeByte disk superblock inode)
+      (value inode.(atime))
+      (value inode.(mtime))
+      (value inode.(ctime))
+      (value inode.(dtime))
   )))).
 \end{lstlisting}
 
@@ -876,11 +908,12 @@ blocks. There is also a third level of indirection, allowing Ext2 to address
 up to roughly sixteen million data blocks.
 
 \subsubsection{parseDeleted}
-With the Inode, we know the first attribute of our File object, the file size.
-We next turn to the second field, whether or not the file is marked as
-deleted, or ``unallocated''. To find the allocation status of an Inode, we
-will need to find the associated allocation bitmap. As mentioned above, the
-bitmap associated with a particular Inode is indicated in that Inode's
+With the Inode and its index, we know the File's file system identifier, size,
+and modification-access-creation-deletion (MAC) times.  We next turn to the
+field indicating whether or not the file is marked as deleted, or
+``unallocated''. To find the allocation status of an Inode, we will need to
+find the associated allocation bitmap. As mentioned above, the bitmap
+associated with a particular Inode is indicated in that Inode's
 GroupDescriptor. As we are only reading whole bytes at a time, we will read
 the byte that contains the allocation bit for the Inode we care about and then
 test the bit (1, allocated, translates to true; 0 to false) within that byte.
@@ -1179,7 +1212,7 @@ null is read. Due to our abstract concept of a file, extracting the first file
 from the tar is relatively straight forward. We need only parse the file size
 (making use of a sequence reader, {\tt seq\_list}), carry over the deleted
 status of the parent tar file, and drop the tar header from the data to create
-a File object.
+a File object (we do not provide any of the optional values).
 
 \begin{lstlisting}
 Definition parseFirstFileNameAndFile (tar: File)
@@ -1195,11 +1228,18 @@ Definition parseFirstFileNameAndFile (tar: File)
     _flatmap_ (fun fileSizeList =>
   (fromOctalAscii fileSizeList) _map_ (fun fileSize =>
     (fileName, 
-     (mkFile fileSize
-             (* Keep the deleted status of the tar *)
-             tar.(deleted)  
-             (* Header size = 512 *)
-             (shift tar.(data) 512)))
+      (mkFile None (* no id in child files*)
+              fileSize
+              (* Keep the deleted status of the tar *)
+              tar.(deleted)  
+              (* Header size = 512 *)
+              (shift tar.(data) 512)
+              (* Carry over fields from parent tar *)
+              tar.(lastAccess)
+              tar.(lastModification)
+              tar.(lastCreated)
+              tar.(lastDeleted)
+    ))
   )).
 \end{lstlisting}
 
@@ -1229,9 +1269,16 @@ Definition recFileNameFrom (nextCall: File -> list ByteString)
           then file.(fileSize) + 512
           else 512 * (2 + (file.(fileSize) / 512))) in
         let trimmedTar := 
-          (mkFile (remaining.(fileSize) - firstFileSize)
+          (mkFile None (* No id in child files *)
+                  (remaining.(fileSize) - firstFileSize)
                   remaining.(deleted) (* Parent's value *)
-                  (shift remaining.(data) firstFileSize)) in
+                  (shift remaining.(data) firstFileSize)
+                  (* Use parent's values *)
+                  remaining.(lastAccess)
+                  remaining.(lastModification)
+                  remaining.(lastCreated)
+                  remaining.(lastDeleted)
+          ) in
         fileName :: (nextCall trimmedTar)
     end.
 \end{lstlisting}
@@ -1297,34 +1344,35 @@ simply an ordered sequence of events; examples of events include file
 modification, user login, system restart, etc. Timelines are certainly useful
 as a form of evidence as they provide a narrative of what took place. They are
 also provable artifacts, as a timeline is only sound as long as there is
-evidence for each of the events and if the order of those events can be
-verified. We consider events as in the correct sequence if events earlier in
-the sequence are {\tt beforeOrConcurrent} with events later in the sequence.
+evidence for each its events and if the order of those events can be verified.
+We consider events to be in the correct sequence if events earlier are {\tt
+beforeOrConcurrent} events later in the sequence.
 
 \begin{lstlisting}
+Definition isInOrder (timeline: Timeline) :=
+  (* Events are in the correct sequence *)
+  (forall (index: nat),
+    (index < ((length timeline) - 1) )%nat ->
+      match (nth_error timeline index, 
+             nth_error timeline (index + 1)) with
+      | (value lhsEvent, value rhsEvent) => 
+        beforeOrConcurrent lhsEvent rhsEvent
+      | _ => False
+      end).
+
 Definition isSound (timeline: Timeline) (disk: Disk) :=
   (forall (event: Event),
     (* Event is evident from the disk *)
     (In event timeline) -> (foundOn event disk))
-  (* Events are in the correct sequence *)
-  /\ (forall (index: nat),
-        (index < ((length timeline) - 1) )%nat ->
-          match (nth_error timeline index,
-                 nth_error timeline (index + 1)) with
-          | (value lhsEvent, value rhsEvent) => 
-            beforeOrConcurrent lhsEvent rhsEvent
-          | _ => False
-          end)
-  .
+  /\ isInOrder timeline.
 \end{lstlisting}
 
 \subsection{Events and Their Relations}
 
-We next consider an {\tt Event} type and its various forms. For files, we will
+We next consider an {\tt Event} type in its various forms. For files, we will
 see four events: access, creation, modification, and deletion. We will
 represent these events with two parameters, a unix-style timestamp of the
-event's execution and a unique identifier for the file (e.g. Inode Index in
-Ext2).
+event's execution and a file system identifier (as would be found in a File.)
 
 \begin{lstlisting}
 Inductive Event: Type :=
@@ -1353,56 +1401,37 @@ Definition beforeOrConcurrent (lhs rhs: Event) :=
   | _ => False.
 \end{lstlisting}
 
-Note that the {\tt beforeOrConcurrent} relation need not be limited to Events
-where we have a concrete timestamp. We could extend the definition of an Event
+Note that the {\tt beforeOrConcurrent} relation need not be limited to events
+where we have a concrete timestamp. We could extend the definition of an event
 to include execution of shell scripts, for example, which have a clear
-relative ordering of timestamps but do not have absolute time.
-
-We also define a function which pulls out the inode of an event (as this is a
-common operation amongst the four types of Events we have defined.) This is
-almost identical to the timestamp retrieval. 
-
-\begin{lstlisting}
-Definition inodeIndexOf (event: Event) : Exc Z :=
-  match event with
-  | FileAccess _ inodeIndex => value inodeIndex
-  | FileModification _ inodeIndex => value inodeIndex
-  | FileCreation _ inodeIndex => value inodeIndex
-  | FileDeletion _ inodeIndex => value inodeIndex
-  end.
-\end{lstlisting}
+relative ordering of commands but do not have absolute time.
 
 \subsection{Finding Events and Their Existence}
 
 For a Timeline to be valid, each of the events in the timeline must follow
-from the disk image. As the events we have discussed so far have an associated
-Inode, it's easy to compute the Inode structure and verify that its access,
-modification, change, or deletion time match that of the event.
+from the disk image. While conceivable events may not be associated with
+files, the four we have defined all require the existence of a file that
+confirms their relevance. We simply check that there exists a file on disk
+that shares the same file system identifier and MAC time.
 
 \begin{lstlisting}
 Definition foundOn (event: Event) (disk: Disk) : Prop :=
-  match (inodeIndexOf event) _flatmap_ (fun inodeIndex =>
-  (findAndParseSuperBlock disk) _flatmap_ (fun superblock =>
-  let groupId := 
-    ((inodeIndex - 1) / superblock.(inodesPerGroup)) + 1 in
-  (findAndParseGroupDescriptor disk superblock groupId)
-    _flatmap_ (fun groupdesc =>
-  (findAndParseInode disk superblock groupdesc inodeIndex) 
-    _map_ (fun inode =>
-    match event with
-    | FileAccess timestamp _ => 
-        inode.(atime) = timestamp
-    | FileModification timestamp _ => 
-        inode.(mtime) = timestamp
-    | FileCreation timestamp _ => 
-        inode.(ctime) = timestamp
-    | FileDeletion timestamp _ => 
-        inode.(dtime) = timestamp
-    end
-  )))) with
-  | error => False
-  | value prop => prop
-  end.
+  exists (file: File),
+    isOnDisk file disk
+    /\ (match event with
+        | FileAccess timestamp fsId =>
+            file.(fileSystemId) = value fsId
+            /\ file.(lastAccess) = value timestamp
+       | FileModification timestamp fsId =>
+            file.(fileSystemId) = value fsId
+            /\ file.(lastModification) = value timestamp
+       | FileCreation timestamp fsId =>
+            file.(fileSystemId) = value fsId
+            /\ file.(lastCreated) = value timestamp
+       | FileDeletion timestamp fsId =>
+            file.(fileSystemId) = value fsId
+            /\ file.(lastDeleted) = value timestamp
+       end).
 \end{lstlisting}
 
 \subsection{Applying to Honeynet}
@@ -1451,49 +1480,72 @@ Lemma lee_honeynet_file:
 \end{lstlisting}
 
 Seeing as the definition of {\tt Timeline.isSound} is composed of two
-computable relations, proving this lemma boils down to a few computations. As
-before, please see the source code for full details.
+computable relations, proving this lemma boils down to a series of
+computations. The full list of tactics used to build up the proof is included
+in the appendix.
 
-\section{Discussion}
+\section{Discussion: Are The Definitions Sufficient?}
 In this paper, we have provided several definitions for types of evidence that
 would be applicable to forensics researchers. It is important to take a step
 back and determine whether or not those definitions provide the evidence we
 need to prove that a root kit was installed on the disk in question. 
 
-We might ask if there are other scenarios that would lead to our definition
-being satisfied without a rootkit being installed; in other words, what kind
-of false positives could occur? Thinking back to our definition, we might
-question each of the clauses within the {\tt borland\_honeynet\_file}
-conjunction. Assuming we weren't dealing with an Ext2 file system, it is
-possible that a very unfortunate, but random disk image could match the bytes
-of the Ext2 disk, therefore satisfying {\tt isOnDisk} even though there is no
-file system to speak of. Similarly, a random sequence of bytes could also
-satisfy our {\tt isDeleted} requirement and even our {\tt isGzip} check.
+First, we note that the timeline we provided (and verified) consists only of
+modification, file system identifiers, and timestamps. We rely on the
+annotations to provide context about which file the identifier is associated
+with; if we were to swap these annotations with different file names, we could
+construct a completely different scenario. Let us assume, however, that we can
+derive a filename from the file system identifier (and can therefore verify
+annotations) as this is a more interesting situation.
 
-Examining the {\tt looksLikeRootkit} function provides another avenue for
-questioning the legitimacy of our work. Many, perfectly kosher file names
-might trigger the root kit alarm if this were the only definition we used, as
-harmless files could be named ssh, ps, ifconfig, etc.
+Making this assumption, are there scenarios where our definitions could be
+satisfied without a rootkit being installed? Let's start by ruling out
+possibilities. While downloading and installing non-system software satisfies
+many of the requirements (perhaps a gzipped-tar that is deleted after
+replacing some files), we can rule this scenario out based on the name of the
+files replaced (i.e. non-system software installation wouldn't affect system
+utilities.) What about an update to a system utility? Here we can rely on the
+clause within our ``malicious-looking'' check which requires {\em multiple}
+system file names.
 
-Similarly, we could argue that the timeline we provided could satisfy a
-completely different scenario. The annotations lead us down the path to
-believing that a root kit had been installed, but we could provide
-alternatives which might imply that {\em requested} software had been
-installed.
+The obvious next step would be to ask what would happen if we were performing
+a system upgrade, one that would affect multiple system files. Here we might
+argue that practical package managers would not include the changes in a
+single archive, but that argument is not as strong as we desire. It's
+conceivable that a hotfix to a predictable operating system, say OS X, might
+come as a single, gzipped tar archive which replaces multiple system files. By
+all accounts, this would trigger our definition, even though a rootkit had
+not actually been installed.
 
-Ultimately, each piece of evidence is not conclusive; we instead rely on the
-evidence in aggregate to determine what happened. This, too, is the
-methodology found within the Honeynet competition; as there were no canonical
-definitions for what it means for a root kit to be installed, each participant
-provided his or her own evidence which satisfied his or her own definition.
-This led them to describe slightly different attacks, even though they all
-shared the same disk image.
+Here, the leap between our definition and its semantics causes us pain --
+scenarios like the one described {\em look} like rootkit installation. System
+files are replaced by those found within an archive which was deleted shortly
+after installation. We might try to eliminate these false positives by
+checking for code signatures or describing rootkit files by a tell-tale
+fingerprint, either within the executable's bytes or within its actions.
+Making this exception would simply move the goal post further down the field;
+we could surely find a legitimate counter-example even with the additional
+restrictions.
+
+We will never be able to completely remove counter-examples as given enough
+iterations, a random number generator would eventually generate a disk that
+provides {\em exactly} the data we need. Clearly, no rootkit was installed on
+such a constructed disk, yet any definition we could conceive could be
+satisfied. Ultimately, the definitions cannot guarantee their semantic
+meaning; in aggregate the definitions can only make such meaning more and more
+likely.
+
+This, too, is the methodology found within the Honeynet competition; as there
+were no canonical definitions for what it means for a rootkit to be installed,
+each participant provided his or her own evidence which satisfied his or her
+own definition. This led them to describe slightly different attacks, even
+though they all shared the same disk image.
 
 We did not set out to provide bullet-proof definitions for concepts such as
 deletion, file creation, etc. Instead, we wanted to model the same types of
 evidence currently put forth by forensics researchers. If a consensus can be
 reached regarding these definitions, we would use it, but at the moment we
-model only the de facto standards.
+model only certain de facto standards.
 
 \section{Future Work}
 Anyone not already familiar with Coq's tactic systems would be quite confused
@@ -1508,27 +1560,28 @@ automation. Providing one of a pre-defined set of evidence types and a disk
 image should be enough for a script to generate the required assumptions,
 evidence, and proof terms. As a second step, we could develop a meta language
 or other interface for describing the types of evidence needed and allow a
-program to search and generate proofs as needed. This connects with wider work
-by Radha Jagadeesan, Corin Pitcher, and James Riely of DePaul University,
-which includes efforts to automate forensic methods.
+program to search and generate proofs. This connects with wider work by Radha
+Jagadeesan, Corin Pitcher, and James Riely of DePaul University, which
+includes efforts to automate forensic methods.
 
 This paper describes only a few of the types of evidence that would be
 required for a complete forensics tool. We used a single honeynet challenge to
-provide this paper scope. Obviously, creating additional definitions of
+provide constraints and scope. Obviously, creating additional definitions of
 evidence would be a key area for future research. This means both tasks such
 as defining additional file systems and describing additional types of events.
-Imagine what types of events would describe a user logging in, executing a
-command, and then disconnecting. Imagine the evidence needed to prove that a
-user frequently visited a certain domain.
+Imagine what events would define a user logging in, executing a command, and
+then disconnecting. What kind of evidence is needed to prove that a user
+frequently visited a certain domain?
 
-Finally, the vast majority of this paper has been devotes to computations or
-definitions; we have not described many relations between the definitions. It
-would be worthwhile to proof propositions about these definition (as we proved
-that JPEG files cannot be Tars). We might prove that a patch applied to a disk
-image could restore a deleted file (as studied by Charles Winebrinner), that
-deletion events imply the associated file is deleted, that files can exist
-which are not addressable, or any number of other proofs and lemmas. These
-would then make proofs about particular disk images even easier to apply.
+Finally, the vast majority of this paper has been devoted to computations or
+definitions; we have not described many propositional relationships. It would
+be worthwhile to prove propositions about these definitions (similar to how we
+showed JPEG files cannot be Tars). We might prove that a patch applied to a
+disk image could restore a deleted file (as studied by Charles Winebrinner),
+that deletion events imply the associated file is deleted, that files can
+exist which are not addressable, or any number of other proofs and lemmas.
+These would then make proofs about particular disk images even easier to
+apply.
 
 \acks
 First, I wish to thank my colleagues at DePaul, including Malik Aldubayan,
@@ -1578,119 +1631,8 @@ at least a few days.
 
 \appendix
 
-\section{JPEG Files Are Not Gzips}
-\begin{lstlisting}
-Lemma jpeg_is_not_gzip : forall (file: File),
-  (isJpeg file) -> ~ (isGzip file).
-Proof.
-  unfold isGzip, isJpeg.
-  intros file jpeg_asmpt.
-  destruct jpeg_asmpt as [byte0_is_255]. rewrite byte0_is_255.
-  unfold not. intros contra. destruct contra as [not_equal].
-  discriminate not_equal.
-Qed.
-\end{lstlisting}
-
-\section{Looks Like Rootkit Examples}
-\begin{lstlisting}
-Lemma rootkit_ex1 : 
-  looksLikeRootkit (ascii2Bytes "last/top").
-Proof.
-  compute. right. right. left. reflexivity.
-Qed.
-
-Lemma rootkit_ex2 : 
-  ~(looksLikeRootkit (ascii2Bytes "last/example.txt")).
-Proof.
-  compute. intro.
-  repeat (destruct H; [ inversion H | ]).
-  apply H.
-Qed.
-\end{lstlisting}
-
-\section{Borland Example}
-\begin{lstlisting}
-Lemma flip_not_equal: forall (x y:Exc File),
-  x <> y -> y <> x.
-Proof.
-  auto.
-Qed.
-
-Lemma deleted_means_value: 
-  forall (disk:Disk) (inodeIndex: Z), 
-    parseFileDeleted disk inodeIndex <> error 
-    -> findAndParseFile disk inodeIndex <> error.
-Proof.
-  intros disk inodeIndex.
-  unfold parseFileDeleted.
-  unfold findAndParseFile.
-  destruct (findAndParseSuperBlock disk) ; [|simpl; auto].
-  simpl.
-  destruct (findAndParseGroupDescriptor disk s 
-              ((inodeIndex - 1) / inodesPerGroup s + 1)); 
-    [|simpl; auto]. simpl.
-  destruct (findAndParseInode disk s g inodeIndex); 
-    [|simpl; auto]. simpl.
-  destruct (parseDeleted disk s g inodeIndex); [|simpl; auto]. 
-  simpl.
-  intros _. discriminate.
-Qed.
-
-Lemma borland_honeynet_file:
-  exists (file: File),
-  (isOnDisk file honeynet_image_a)
-  /\ isDeleted file
-  /\ isGzip file
-  /\ exists (filename: ByteString),
-     (In filename (Tar.parseFileNames (gunzip_a file)))
-     /\ looksLikeRootkit filename.
-Proof.
-  remember (findAndParseFile honeynet_image_a 23).
-  destruct e; [ | contradict Heqe; apply flip_not_equal; 
-      apply deleted_means_value; vm_compute; discriminate].
-  exists f.
-  split. 
-    (* isOnDisk *)
-    unfold isOnDisk. exists 23.
-    unfold fileEq. symmetry in Heqe. rewrite Heqe.
-    simpl. repeat (split ;[reflexivity|] ).
-    intros. reflexivity.
-
-  split.
-    (* isDeleted *)
-    unfold isDeleted.
-    assert ((findAndParseFile honeynet_image_a 23) _map_ 
-            (fun f => f.(deleted)) = value true).
-    vm_compute. reflexivity.
-    rewrite <- Heqe in H.
-    simpl in H. injection H. auto.
-
-  split.
-    (* isGzip *)
-    unfold isGzip. 
-    split.
-      assert ((findAndParseFile honeynet_image_a 23) _flatmap_
-              (fun f => f @[ 0 ]) = value 31).
-      vm_compute. reflexivity.
-      rewrite <- Heqe in H. simpl in H. apply H.
-    split.
-      assert ((findAndParseFile honeynet_image_a 23) _flatmap_
-              (fun f => f @[ 1 ]) = value 139).
-      vm_compute. reflexivity.
-      rewrite <- Heqe in H. simpl in H. apply H.
-
-      assert ((findAndParseFile honeynet_image_a 23) _flatmap_
-              (fun f => f @[ 2 ]) = value 8).
-      vm_compute. reflexivity.
-      rewrite <- Heqe in H. simpl in H. apply H.
-      
-    (* tar contains a file that looks like a root kit *)
-    exists (ascii2Bytes "last/ssh").
-    split.
-      vm_compute. repeat (try (left; reflexivity) ; right).
-
-      vm_compute. repeat (try (left; reflexivity) ; right).
-Qed.
-\end{lstlisting}
+\section{Code Samples}
+Complete code samples and Coq tactics are available on Github:
+\url{https://github.com/cmc333333/forensics-thesis-code}
 
 \end{document}
