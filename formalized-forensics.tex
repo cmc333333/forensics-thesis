@@ -1499,7 +1499,7 @@ computable relations, proving this lemma boils down to a series of
 computations. The full list of tactics used to build up the proof is linked
 from the appendix.
 
-\section{Discussion: Are These Definitions Sufficient?}
+\section{Are These Definitions Sufficient?}
 In this paper, we have provided several definitions for types of evidence that
 would be applicable to forensics researchers. It is important to take a step
 back and determine whether or not those definitions provide the evidence we
@@ -1561,6 +1561,23 @@ deletion, file creation, etc. Instead, we wanted to model the same types of
 evidence currently put forth by forensics researchers. If a consensus can be
 reached regarding these definitions, we would use it, but at the moment we
 model only certain de facto standards.
+
+\section{Tractability}
+The final artifact when proving a lemma is a so-called ``proof term'', a
+type-checkable entity which serves as verifiable evidence for the lemma. If
+this proof term were to grow with the size of the underlying disk (or files or
+file headers, etc.,) it would quickly become unmanageable. Larger disks would
+eventually prevent a proof-checker from running.
+
+Instead, the design presented causes a well-developed proof to grow only with
+the size of the {\em lemmas}. Regardless of disk size, the proof term can
+remain equivalent, reducing the burden for proof-checkers. Further, with a
+consistent proof term, we open the possibility of expanding beyond some of
+Coq's limitations. As discussed previously, due to Coq's representations,
+relevant sections on disk must be limited to a few thousand offsets. However,
+we could hypothetically export a proof term generated within Coq on a smaller
+disk size and run it through a external proof-checker to handle larger disk
+images.
 
 \section{Future Work}
 Anyone not already familiar with Coq's tactic systems would be quite confused
