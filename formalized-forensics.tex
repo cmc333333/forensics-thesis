@@ -71,7 +71,8 @@ combined to mimic the types of evidence given by independent forensics
 researchers in a forensics competition (``Honeynet''.) Using said definitions,
 the evidence is proven to be consistent with the disk image provided for the
 relevant competition. Along the way, functions for parsing and manipulating
-relevant data structures within Coq are also described.
+pertinent data structures within Coq are also described. The wider feasibility
+of this approach is also discussed.
 \end{abstract}
 
 \keywords
@@ -90,14 +91,14 @@ is a concrete, standardized definition of what it means to have malware
 installed and evidence fitting that definition to prove that your machine has
 been invaded.
 
-This scenario and others like it (though, perhaps more mundane) are the
-ultimate goal of the research provided in this paper. To achieve that, we need
-formal definitions for various types of evidence used by forensics analysts.
-We also require a way to convert real data (e.g. from a disk image) into these
-definitions such that we can provide concrete {\em proofs} showing that a
-particular image does or does not fit such a definition. In the above example,
-we could provide a verifiable proof that the disk image satisfied a definition
-of ``malware installation''. 
+Solutions to this scenario and others like it (though, perhaps more mundane)
+are the ultimate goal of the research provided in this paper. To achieve that,
+we need formal definitions for various types of evidence used by forensics
+analysts.  We also require a way to convert real data (e.g. from a disk image)
+into these definitions such that we can provide concrete {\em proofs} showing
+that a particular image does or does not fit such a definition. In the above
+example, we could provide a verifiable proof that the disk image satisfied a
+definition of ``malware installation''. 
 
 To guide our search, we will focus on the evidence structures and proofs
 described by several independent researchers studying a ``Honeynet''
@@ -110,21 +111,26 @@ consider one specific contest\cite{honeynet-15}, in which a rootkit
 (replacement system programs that hide malicious activity) was installed on a
 server. The security community was asked to recover the rootkit, prove that it
 had been installed, and provide a step-by-step writeup describing how the
-rootkit was found.
+rootkit was found. We will formalize some of the definitions and evidence
+provided by contestants in that competition.
 
-We will describe our definitions, code our parsers, and implement our evidence
-in the proof-oriented language, Coq. While this language lives in the
-ML-family of programming languages, we will augment it with several functional
-and object-oriented notations. Using Coq allows us to formalize our proofs and
+Our definitions, parsers, and evidence will be described/implemented in the
+proof-oriented language, Coq. While this language lives in the ML-family of
+programming languages, we will augment it with several functional and
+object-oriented notations. Using Coq allows us to formalize our proofs and
 definitions, but significantly restricts the practicality of our efforts; we
-will expand on these limitations throughout the paper.
+will expand on these limitations throughout the paper. Despite these faults,
+Coq lets us build complete proof terms which serve as evidence that the disk
+image provided satisfies the researchers' definitions.
 
-By the end of this write-up, we will have provided definitions used by some of
-the Honeynet contestants. These include definitions of tar files, rootkit-like
-archives, file deletion (on the Ext2 file system,) as well as a timeline of
-events which would be consistent with rootkit installation.  Given portions of
-the same disk provided to those researchers, we will also present proofs that
-satisfy these definitions.
+Finally, we will show how the proof terms generated allow our solution to be
+{\em feasible} in the sense that they grow with the complexity of their
+sub-goals rather than with the size of a disk image, file, etc. Combining the
+specific evidence with documentation for the feasibility of this strategy
+should demonstrate the approach's potential as a core tool for forensics
+investigators. Along the way, we will include definitions of tar files,
+rootkit-like archives, file deletion (on the Ext2 file system,) as well as a
+timeline of events consistent with rootkit installation.
 
 \section{Getting Our Feet Wet with File Types}
 
