@@ -222,8 +222,8 @@ the contained tar looks like a rootkit. If such a file exists, the Borland
 definition is satisfied, and we presume a rootkit has been installed. For the
 remainder of this section, we dive deeper into each of the definitions in the
 ``and'' clause (save {\tt isGzip}, which we have previously described.)
-Section 8 will investigate whether or not Borland's definition is sufficient
-to describe a rootkit installation.
+Section \ref{sec:sufficient} will investigate whether or not Borland's
+definition is sufficient to describe a rootkit installation.
 
 \subsection{The File Structure}
 
@@ -244,7 +244,7 @@ access, modification, creation, and deletion times. These timestamps are
 represented as natural numbers ({\tt N}), and are all optional (indicated by
 {\tt Exc},) as not all file systems record their values. The optional fields
 are particularly useful for constructing event time lines, as described in
-Section 7.
+Section \ref{sec:timelines}.
 
 \begin{lstlisting}
 Structure File := mkFile {
@@ -261,10 +261,10 @@ Structure File := mkFile {
 The {\tt FileId} type may take multiple forms; for the purposes of our
 exploration, we care only about Ext2 file systems, files embedded in a
 tar-archive, and files which we define from thin-air (see ``assumptions'' as
-defined in Section 3.) The former needs an Inode Index to serve as an
-identifier; the second needs the archive's file identifier as well as an
-offset within the archive; the final will use {\tt ByteData} (i.e.  the file
-data) to identify.
+defined in Section \ref{sec:proving}.) The former needs an Inode Index to
+serve as an identifier; the second needs the archive's file identifier as well
+as an offset within the archive; the final will use {\tt ByteData} (i.e.  the
+file data) to identify.
 
 \begin{lstlisting}
 Inductive FileId: Type :=
@@ -279,9 +279,9 @@ data ({\tt file @[ offset | disk ]}) gets expanded into a file-system-aware
 function, {\tt fetchByte}. This function uses the provided disk and file
 identifier to retrieve a requested byte, decoupling the file data from the
 {\tt File} structure. For Ext2, this means delegating to the appropriate Ext2
-function (described in Section 4.???); for the Mock file system, it means
-delegating to the contained {\tt ByteData}; Tar file processing will be
-explained in Section 5.???.
+function (described in Section \ref{sec:ext2}); for the Mock file system, it
+means delegating to the contained {\tt ByteData}; Tar file processing will be
+explained in Section \ref{sec:tar}.
 
 \begin{lstlisting}
 Fixpoint fetchByte (fileId: FileId) (disk: Disk)
@@ -350,7 +350,8 @@ The functions {\tt findAndParseFile} perform the work of inspecting the disk
 image, reading the relevant data structures, and creating an abstract
 representation of the results (in this case, a {\tt File}.) {\tt Found}
 implies that there were no errors while trying to retrieve the file; see
-Section 4.???'s discussion of the {\tt Fetch} construction for more.
+Section \ref{subsec:Fetch}'s discussion of the {\tt Fetch} construction for
+more.
 
 \subsection{isDeleted}
 
@@ -370,9 +371,9 @@ parameter {\tt (gunzip file)}. {\tt gunzip}, a parameter to the {\tt
 borland\_rootkit} definition, represents the unzipping/deflating operation for
 gzip-files. As implementing the decompression algorithm within Coq would not
 be particularly useful to our study, we instead relegate its operation to a
-parameter in the definition. As we will see in Section 5.???, this parameter
-percolates to the top of the proof; we will effectively run the function
-via an external program in a preprocessing step.
+parameter in the definition. As we will see in Section \ref{subsec:gunzip},
+this parameter percolates to the top of the proof; we will effectively run the
+function via an external program in a preprocessing step.
 
 \subsection{Tars That Look Like Rootkits}
 
@@ -419,16 +420,151 @@ Lemma systemFile_ex2 :
   ~(systemFile "last/example.txt").
 \end{lstlisting}
 
-\subsection{Summary}
+\subsection{Summary*}
 
 We have now described {\tt isOnDisk}, {\tt isDeleted}, {\tt isGzip}, and {\tt
 Tar.looksLikeRootkit} enough that we could see why Borland proposed them as
 definitions of evidence for a rootkit installation. Along the way, we glossed
 over several critical parsing/computation functions (including retrieval of
 bytes in the Ext2 file system and parsing file names from Tar files,) which we
-will cover in sections 5 and 6. Before diving in, however, we should clarify
-the relationships between some of the concepts we are proposing; this is the
-focus of the next section.
+will cover in sections \ref{sec:ext2} and \ref{sec:tar}. Before diving in,
+however, we should clarify the relationships between some of the concepts we
+are proposing; this is the focus of the next section.
+
+\section{Proving the Property for a Particular Disk+}
+\label{sec:proving}
+
+Now that we have a definition for rootkit installation, we can prove that the
+disk image provided for the Honeynet competition satisfies that definition. We
+will use Coq's tactic language to build a proof term to serve as evidence.
+
+\begin{lstlisting}
+Lemma borland_honeynet_file:
+  borland_rootkit honeynet_image_a gunzip_a.
+  Proof.
+    apply borland_reflection 
+      with (file := file23) 
+           (filename1 := maliciousFileName1) 
+           (filename2 := maliciousFileName2).
+    vm_compute. reflexivity.
+Qed.
+\end{lstlisting}
+
+This very simply proof clearly hides a great deal of complexity. What are {\tt
+honeynet\_image\_a} and {\tt gunzip\_a}? Where did {\tt file23} and the {\tt
+maliciousFileName}s come from? How does {\tt borland\_reflection} work? While
+we will answer each of these questions in detail, it's important to recognize
+that writing the individual proof is very straight forward (and could easily
+be automated). This plays a heavy role in the future of this type of research,
+as discussed in section \ref{sec:future}. Further, the proof term itself is
+quite small, the importance of which will be covered in section
+\ref{subsec:reflection}.
+
+\subsection{Disk Images}
+
+{\tt honeynet\_image\_a} has the type, {\tt Disk}, which is used to represent
+a random-access disk throughout our definitions and proofs.  Technically, it
+is function from {\tt N} to {\tt Fetch Byte}, acting as a byte-retrieval
+mechanism; give a {\tt Disk} an offset, and it will respond with the byte
+value at the offset requested or an error code. The {\tt ByteData} type is
+simply an alias of {\tt Disk}, but provides a more semantic name.
+
+Generally, disk data is backed by an in-memory mapping via Coq's {\tt FMapAVL}
+trees, and must be generated from the true disk values. Due to Coq's
+limitations on data structure sizes, we only populate these maps with
+essential values; once the map reaches a few thousand entries, it will no
+longer be usable within Coq. We leave a full accounting of the disk bytes to
+our code (see the comments in {\tt example\_images.v} for an explanation of
+why each byte range is included.) Note: {\tt find} is an operation to reach
+into a {\tt FMapAVL}.
+
+\begin{lstlisting}
+Definition honeynet_map := 
+[ 
+  1024 |-> "216", 
+  1025 |-> "002",
+  1026 |-> "001", 
+  1027 |-> "000", 
+  ...
+].
+
+Definition Disk_of_Map_N_Byte (map: Map_N_Byte) : Disk :=
+  fun (key: Z) => find key map.
+
+Definition honeynet_image_a : Disk := 
+  Disk_of_Map_N_Byte honeynet_map.
+\end{lstlisting}
+
+\subsection{The Fetch Type and Populating Disk Images+}
+\label{subsec:fetch}
+
+As disk images are too large to place in memory, the {\tt Disk} discussed
+above will have "holes." We initially gravitated towards the Option monad
+({\tt Exc} in Coq,) but realized that, if we were to chain options (see
+\ref{subsec:ext2functional},) we would have no feedback on {\em where} the
+retrieval operations failed. We therefore created a new inductive type {\tt
+Fetch}, which can be instantiated as a {\tt Found} when the byte (or whatever
+data type) is present, a {\tt MissingAt} when not present, and an {\tt
+ErrorString} when a different error occurs.
+
+\begin{lstlisting}
+Inductive Fetch {A:Type}: Type :=
+  | Found: A -> Fetch
+  | MissingAt: N -> Fetch
+  | ErrorString: string -> Fetch
+.
+\end{lstlisting}
+
+To see why carrying along {\em where} a fetching operation failed is useful,
+let us consider how a disk image is constructed. The Coq language does not
+provide a mechanism for file access, so we cannot write a program within it to
+populate our Disk image. The definitions and functions that define what data
+is needed are only available within Coq, however, so while we could use Python
+or Scala or any general-purpose language to retrieve necessary bytes, those
+languages would not know which bytes were actually necessary.
+
+Luckily, Coq has an {\tt Extraction} command, which allows a Coq function/data
+structure to be exported to Ocaml, Haskell, or Scheme. The extraction process
+can include all necessary types and referenced terms to build the requested
+expression. With this ability, we can use the definitions created in Coq in
+concert with file access built into those languages to construct an entire
+disk structure. We would simply extract a function which requires the disk
+image, feed it an empty {\tt Disk}, see where ({\tt MissingAt}) the function
+failed, retrieve that byte from disk, add it to the {\tt Disk} structure, and
+repeat until the function was successful.
+
+\subsection{Gunzip+}
+
+The second assumption ({\tt gunzip\_a}) represents gzip's unzipping/deflating
+operation. As implementing the decompression algorithm within Coq would not be
+particularly useful to our study, we instead delegate its operation to an
+assumption. This assumption needs to be able to convert a compressed, gzip
+file into the corresponding, uncompressed file, which effectively means
+providing a new {\tt File} populated with the relevant bytes. In our example,
+we used the {\it Sleuth Kit}'s {\tt icat} program to pull inode {\tt 23}'s
+contents from the disk image, ran {\tt gunzip} on the resulting {\tt tgz}
+file, and then pulled the relevant bytes (i.e. those necessary from the tar
+file headers) into a {\tt FMapAVL}. We effectively just wrap this data in a
+function that, regardless of {\tt File} input, returns the uncompressed file
+data. 
+
+\begin{lstlisting}
+Definition gunzipped_23 := 
+[ 
+  0 |-> 108, 
+  1 |-> 97, 
+  2 |-> 115, 
+  ...
+].
+
+Definition gunzip_a := (fun (input: File) => 
+  (mkFile None (* no need for an id *)
+          1454080 (* uncompressed file size *)
+          input.(deleted) 
+          (fun (offset: Z) => find offset gunzipped_23)
+          (* Fields not used; ignore them *)
+          None None None None)).
+\end{lstlisting}
 
 \section{Lemmas, Computations, Definitions; Oh My!+}
 
@@ -477,7 +613,7 @@ be made that encompasses that activity. Our proofs cannot validate that {\tt
 disk\_a} or {\tt gunzip\_a} accurately represent values on the disk or an
 unzipping function -- they instead trust those assumptions to be accurate and
 rely on users for verification. We will describe the assumptions made for our
-Honeynet example in detail in section 5.2.
+Honeynet example in detail in \ref{subsec:unknown}.
 
 Where possible, we do attempt to {\bf parse} and/or {\bf compute} values
 within Coq. Here we have codified algorithms which take the bytes from disk
@@ -506,7 +642,7 @@ definitions provided, it is only up to a reviewer to determine whether or not
 the {\em definitions} are satisfactory. We provide a list of tactics that
 generate the proof term for each of our lemmas in the source linked to in our
 appendix, and we will expand the implications of this topic further, in
-section 7.
+section \ref{sec:unknown}.
 
 Finally, the code written for this research is sprinkled with {\bf utility
 functions} to perform (mostly) simple transformations. {\tt
@@ -576,69 +712,6 @@ We have rushed through these concepts as we assume the reader has some
 background in functional programming. For a more thorough (yet still brief and
 practical) introduction, see Wamper \& Miller\cite{scala}.
 
-\subsection{Assumptions}
-Our proof will make use of two assumptions: {\tt honeynet\_image\_a}, a {\tt
-Disk} and {\tt gunzip\_a}, a function, {\tt File->File}. The {\tt Disk} type
-is used to represent a disk image throughout our definitions and proofs.
-Technically, they are functions from {\tt Z} to {\tt Exc Z}, acting as
-byte-retrieval mechanism; give a {\tt Disk} an offset, and it will respond
-with the byte value (a {\tt value Z}) at that offset in the disk image, or
-{\tt error} if no such byte exists on the disk. Generally, disk data is backed
-by an in-memory mapping via Coq's {\tt FMapAVL} trees, and must be generated
-from the true disk values. Due to Coq's limitations on data structure sizes,
-we only populate these maps with essential values; once the map reaches a few
-thousand entries, it will no longer be usable within Coq. We leave a full
-accounting of the disk bytes to our code (see the comments in {\tt
-example\_images.v} for an explanation of why each byte range is included.)
-Note: {\tt find} is an operation to reach into a {\tt FMapAVL}.
-
-\begin{lstlisting}
-Definition honeynet_map := 
-[ 
-  1024 |-> 216, 
-  1025 |-> 2,
-  1026 |-> 1, 
-  1027 |-> 0, 
-  ...
-].
-
-Definition Disk_of_Map_Z_Z (map: Map_Z_Z) : Disk :=
-  fun (key: Z) => find key map.
-
-Definition honeynet_image_a : Disk := 
-  Disk_of_Map_Z_Z honeynet_map.
-\end{lstlisting}
-
-The second assumption ({\tt gunzip\_a}) represents gzip's unzipping/deflating
-operation. As implementing the decompression algorithm within Coq would not be
-particularly useful to our study, we instead delegate its operation to an
-assumption. This assumption needs to be able to convert a compressed, gzip
-file into the corresponding, uncompressed file, which effectively means
-providing a new {\tt File} populated with the relevant bytes. In our example,
-we used the {\it Sleuth Kit}'s {\tt icat} program to pull inode {\tt 23}'s
-contents from the disk image, ran {\tt gunzip} on the resulting {\tt tgz}
-file, and then pulled the relevant bytes (i.e. those necessary from the tar
-file headers) into a {\tt FMapAVL}. We effectively just wrap this data in a
-function that, regardless of {\tt File} input, returns the uncompressed file
-data. 
-
-\begin{lstlisting}
-Definition gunzipped_23 := 
-[ 
-  0 |-> 108, 
-  1 |-> 97, 
-  2 |-> 115, 
-  ...
-].
-
-Definition gunzip_a := (fun (input: File) => 
-  (mkFile None (* no need for an id *)
-          1454080 (* uncompressed file size *)
-          input.(deleted) 
-          (fun (offset: Z) => find offset gunzipped_23)
-          (* Fields not used; ignore them *)
-          None None None None)).
-\end{lstlisting}
 
 \subsection{Parsing a File via INode}
 
@@ -1370,6 +1443,7 @@ require we provide a File (by parsing it from the disk) as evidence. We can
 more or less compute each of the properties based on that file.
 
 \section{Timelines as Evidence*}
+\label{sec:timelines}
 
 A second type of evidence provided by the Honeynet researchers (particularly
 from Jason Lee\cite{lee}) had the form of a timeline of events to explain
@@ -1519,6 +1593,8 @@ computations. The full list of tactics used to build up the proof is linked
 from the appendix.
 
 \section{Are These Definitions Sufficient?*}
+\label{sec:sufficient}
+
 In this paper, we have provided several definitions for types of evidence that
 would be applicable to forensics researchers. It is important to take a step
 back and determine whether or not those definitions provide the evidence we
@@ -1599,6 +1675,8 @@ disk size and run it through a external proof-checker to handle larger disk
 images.
 
 \section{Future Work*}
+\label{sec:future}
+
 Anyone not already familiar with Coq's tactic systems would be quite confused
 by the steps needed to prove any of these lemmas. On the other hand, those who
 are familiar with Coq might find the compute-heavy nature of these definitions
