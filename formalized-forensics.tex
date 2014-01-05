@@ -452,12 +452,12 @@ Qed.
 
 This very simply proof clearly hides a great deal of complexity. What are {\tt
 honeynet\_image\_a} and {\tt gunzip\_a}? How does {\tt borland\_reflection}
-work? Where did {\tt file23} and the {\tt maliciousFileName}s come from? While
-we will answer each of these questions in detail, it's important to recognize
-that writing the individual proof is very straight forward (and could easily
-be automated). This plays a heavy role in the future of this type of research,
-as discussed in section \ref{sec:future}. Further, the proof term itself is
-quite small, the importance of which will be covered in section
+work? Where did {\tt file23} and the \\{\tt maliciousFileName}s come from?
+While we will answer each of these questions in detail, it's important to
+recognize that writing the individual proof is very straight forward (and
+could easily be automated). This plays a heavy role in the future of this type
+of research, as discussed in section \ref{sec:future}. Further, the proof term
+itself is quite small, the importance of which will be covered in section
 \ref{subsec:reflection}.
 
 \subsection{Disk Images}
@@ -597,10 +597,96 @@ trust the proof results because we know the {\em lineage} of the data used to
 create {\tt gunzipped\_23}. Encapsulating that lineage programmatically is an
 area of future research, discussed in Section \ref{sec:future}.
 
-\subsection{Proof By Reflection+}
+\subsection{Proof By Reflection}
 \label{subsec:reflection}
 
-\subsection{Computed Structures*}
+Each of the definitions we have seen so far lives within Coq's {\tt Prop}
+realm. For properties to be proven valid, Coq's proof tactics are required,
+describing how assumptions can be transformed to imply the conclusion. This
+lies in contrast to Coq's boolean type, which can be {\bf computed}, meaning
+boolean expressions can be reduced to a single value. To make the distinction
+clear, let us consider two analogous goals involving a simple reduction.
+
+\begin{lstlisting}
+Lemma reduce_prop:
+  forall (P Q R :Prop),
+  Q -> R -> ~P ->
+    (Q \/ ~R) /\ (P \/ (~P /\ R /\ Q)).
+Proof.
+  intros.
+  split.
+    (* Q \/ ~R *)
+    left. assumption.
+    (* P /\ (~P /\ R /\ Q) *)
+    right. 
+    split.
+      (* ~ P *) assumption.
+    split.
+      (* R *) assumption.
+      (* Q *) assumption.
+Qed.
+
+Lemma reduce_bool:
+  forall (p q r :bool),
+  q = true -> r = true -> p = false ->
+    (q || (negb r)) && (p || ((negb p) && r && q)) = true.
+Proof.
+  intros. rewrite H. rewrite H0. rewrite H1.
+  compute.
+  reflexivity.
+Qed.
+\end{lstlisting}
+
+The latter is largely a matter of plugging in values followed by the {\tt
+compute} tactic. Since it deals only with boolean logic, which can be reduced
+automatically, we do not need to tease it apart as we do with the {\tt Prop}
+version. This makes sense, as {\tt Prop} represents more than just boolean
+values; how could we {\em compute} that a property held for all integers, or
+that there {\em existed} a certain type of value?
+
+Not all properties are this complex, however, particularly in our problem
+domain. We are largely proving that byte values are equivalent, meaning it
+would be awfully nice to rely on boolean algebra in our proofs. We do not want
+the definitions to be entirely composed on booleans, however, as boolean
+expressions have significantly less expressive power. If we were able to prove
+that a boolean reduction {\em implied} a property, however, we could prove
+that property simply by running {\tt compute}. This is the essence of proof by
+reflection. 
+
+As an example, consider our {\tt isJpeg} property. We have also written an
+equivalent, boolean version, {\tt isJpeg\_compute} and a lemma, {\tt
+isJpeg\_reflection} which shows how the boolean version implies the property.
+Note that {\tt Byte.feqb} is a boolean form of equality over {\tt Fetch
+Byte}s.
+
+\begin{lstlisting}
+Definition isJpeg (file: File) (disk: Disk) :=
+     file @[  0 | disk ] = Found "255"
+  /\ file @[  1 | disk ] = Found "216"
+  /\ file @[- 2 | disk ] = Found "255"
+  /\ file @[- 1 | disk ] = Found "217".
+
+Definition isJpeg_compute (file: File) (disk: Disk) :=
+     Byte.feqb (file @[  0 | disk ]) (Found "255")
+  && Byte.feqb (file @[  1 | disk ]) (Found "216")
+  && Byte.feqb (file @[- 2 | disk ]) (Found "255")
+  && Byte.feqb (file @[- 1 | disk ]) (Found "217").
+
+Lemma isJpeg_reflection (file: File) (disk: Disk) :
+  isJpeg_compute file disk = true -> isJpeg file disk.
+\end{lstlisting}
+
+Using proof by reflection (as we do with \\{\tt borland\_reflection}) not only
+reduces the number of proof tactics necessary, it also reduces the size of the
+so-called ``proof term.'' The proof term is the ultimate evidence that a
+property holds; it is what can be shipped around and verified in our
+hypothetical court cases. If the size of this proof term grew proportional to
+the size of the disk image, the terms would quickly become unmanageable. Plausible use of these techniques would likely mean applying properties over
+thousand (if not millions) of files; only if the proof terms remain a constant
+size can they be useful at this scale. Proof by reflection accomplishes that
+goal.
+
+\subsection{Computed Structures+}
 
 \section{Ext2 Structures and Computations+}
 
@@ -1219,19 +1305,6 @@ parsing algorithms. It should be relatively simple for someone to write a
 different parser which produces the same structures without affecting many of
 the definitions.
 
-
-Where possible, we do attempt to {\bf parse} and/or {\bf compute} values
-within Coq. Here we have codified algorithms which take the bytes from disk
-(assumptions) and convert them into relevant structures. This might mean
-creating Inodes, SuperBlocks, and GroupDescriptors for a disk with Ext2 on it,
-reading file names from a tar archive, generating modify-access-create times
-for Inodes, or creating ``sub-tars'' by striping off the first file's
-information from an archive. In all cases, these operations are our (perhaps
-flawed) implementations of various specifications; users should feel free to
-check the structures created against those found using other tools.
-Ultimately, we aimed to provide definitions and data structures which could
-serve as building blocks for proofs; parsing and computations are simply the
-glue that tie those building blocks to actual data.
 
 The Honeynet competition we have described required researchers provide
 ``{\bf evidence}'' or ``{\bf proof}'' that the disk had been compromised by a
