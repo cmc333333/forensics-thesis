@@ -420,7 +420,7 @@ Lemma systemFile_ex2 :
   ~(systemFile "last/example.txt").
 \end{lstlisting}
 
-\subsection{Summary*}
+\subsection{Summary}
 
 We have now described {\tt isOnDisk}, {\tt isDeleted}, {\tt isGzip}, and {\tt
 Tar.looksLikeRootkit} enough that we could see why Borland proposed them as
@@ -428,10 +428,10 @@ definitions of evidence for a rootkit installation. Along the way, we glossed
 over several critical parsing/computation functions (including retrieval of
 bytes in the Ext2 file system and parsing file names from Tar files,) which we
 will cover in sections \ref{sec:ext2} and \ref{sec:tar}. Before diving in,
-however, we should clarify the relationships between some of the concepts we
-are proposing; this is the focus of the next section.
+however, let's how one would show that the Honeynet disk image satisfies our
+property.
 
-\section{Proving the Property for a Particular Disk+}
+\section{Proving the Property for a Particular Disk}
 \label{sec:proving}
 
 Now that we have a definition for rootkit installation, we can prove that the
@@ -495,7 +495,7 @@ Definition honeynet_image_a : Disk :=
   Disk_of_Map_N_Byte honeynet_map.
 \end{lstlisting}
 
-\subsection{The Fetch Type and Populating Disk Images+}
+\subsection{The Fetch Type and Populating Disk Images}
 \label{subsec:fetch}
 
 As disk images are too large to place in memory, the {\tt Disk} discussed
@@ -686,17 +686,72 @@ thousand (if not millions) of files; only if the proof terms remain a constant
 size can they be useful at this scale. Proof by reflection accomplishes that
 goal.
 
-\subsection{Computed Structures+}
+\subsection{Computed Structures}
 
-\section{Ext2 Structures and Computations+}
+While the definitions we use are conducive to conversion into boolean forms,
+there are a few situations where we would still like the {\tt Prop} version to
+include an existential variable. Our definition of a tar file which {\tt
+looksLikeRootkit}, for example, states that there {\em exists} two distinct
+filenames that satisfy certain properties.
+
+\begin{lstlisting}
+Definition looksLikeRootkit (file: File) (disk: Disk) :=
+  let fileNames := parseFileNames file disk in
+  exists (filename1 filename2: string),
+    filename1 <> filename2
+    /\ In filename1 fileNames
+    /\ In filename2 fileNames
+    /\ (FileNames.systemFile filename1)
+    /\ (FileNames.systemFile filename2).
+\end{lstlisting}
+
+Using existential variables here makes the definition cleaner. It does not
+really matter what the file names are; the definition only requires {\em that}
+they are. How can this be converted into a computational version? If we were
+proving a file satisfied such a definition, we would generally provide the
+file names as existential proof (via the {\tt exists} tactic.) We will need to
+do the same for the boolean function, providing the file names as parameters.
+
+\begin{lstlisting}
+Definition looksLikeRootkit_compute (file: File) (disk: Disk)
+  (filename1 filename2: string) :=
+  let fileNames := parseFileNames file disk in
+     (negb (string_eqb filename1 filename2))
+  && (existsb (string_eqb filename1) fileNames)
+  && (existsb (string_eqb filename2) fileNames)
+  && (FileNames.systemFile_compute filename1)
+  && (FileNames.systemFile_compute filename2).
+\end{lstlisting}
+
+We also need a lemma that ties the compute version to the {\tt Prop} version;
+this lemma will likewise need the file names.
+
+\begin{lstlisting}
+Lemma looksLikeRootkit_reflection (file: File) (disk: Disk)
+  (filename1 filename2: string) :
+  looksLikeRootkit_compute file disk filename1 filename2 = true
+    -> looksLikeRootkit file disk.
+\end{lstlisting}
+
+When we apply {\tt looksLokeRootkit\_reflection}, we will provide the two file
+names as parameters (instead of providing them to the {\tt exists} tactic.)
+Where do these existential values come from? For our examples, we simply
+instantiated the file name strings and file structures directly, but the
+longer-term strategy is to compute them from the assumptions. These computed
+structures are {\em not} assumptions, but could easily be created during the
+assumption generation phase. See Section \ref{sec:future} on future work for
+details.
+
+\section{Ext2 Structures and Computations}
+\label{sec:ext2}
 
 In proving that a file was present on an Ext2 disk image, we deferred to the
 simple interface of {\tt Ext2.findAndParseFile}; similarly, when determining
 individual bytes of a file, we relied on the {\tt Ext2.fileByte} function.
 Unfortunately, these interfaces hide a great deal of complexity present within
 Ext2 disks. As a proof of concept, we next provide implementation details for
-this function; it should be easy to see how this research could be extended to
-include additional file systems so long as a similar interface can be
+these functions; it should be easy to see how this research could be extended
+to include additional file systems so long as similar interfaces can be
 provided.
 
 \subsection{A Note on Functional Idioms}
@@ -707,7 +762,7 @@ programming.  In particular, we make heavy use of the ``option'' pattern; due
 to the sparse map that we use to represent the disk, the parsing code does not
 know whether requested bytes will be present. To account for this fact, each
 attempt to read returns an {\em option} of the result. We use the {\tt Fetch}
-type (discussed in \ref{subsec:fetch}) to represent these options.
+type (discussed in Section \ref{subsec:fetch}) to represent these options.
 
 The benefit of wrapping the value in the monadic {\tt Fetch} is that we can
 continue computation without knowing (in advance) whether a sub-computation
@@ -716,7 +771,7 @@ that functions which produce them can be chained such that {\em any} error
 in a component causes the entire computation to result in an error. To get to
 this point, we define two functions, indicated by the infix notation {\tt
 \_fmap\_} and {\tt \_fflatmap\_} (the prepending `f' indicates that the {\tt
-Fetch} type is used rather than Coq's built-in {\tt Exc}. The function
+Fetch} type is used rather than Coq's built-in {\tt Exc}.) The function
 signatures for each should aid their explanation.
 
 \begin{lstlisting}
@@ -729,12 +784,12 @@ Definition fetch_flatmap {A B: Type} (opt: @Fetch A)
 \end{lstlisting}
 
 The role of {\tt \_fmap\_} is to transform the contents of a {\tt Fetch}, if
-present. If the {\tt Fetch} contains an error, map has no effect.  {\tt
-\_fflatmap\_} similarly does not affect such {\tt Fetch}s. However, if a value
-is present (indicated by {\tt Found}), the provided function ({\tt fn}) is
-applied and the {\tt Fetch} is replaced with that function's result. In other
-words, {\tt \_fflatmap\_} is like applying a {\tt \_fmap\_} and then stripping
-the outer {\tt Fetch}. These functions allow sequences like
+present. If the {\tt Fetch} contains an error, {\tt \_fmap\_} has no effect.
+{\tt \_fflatmap\_} similarly does not affect such {\tt Fetch}s. However, if a
+value is present (indicated by {\tt Found}), the provided function ({\tt fn})
+is applied and the {\tt Fetch} is replaced with that function's result. In
+other words, {\tt \_fflatmap\_} is like applying an {\tt \_fmap\_} and then
+stripping the outer {\tt Fetch}. These functions allow sequences like
 
 \begin{lstlisting}
   (file @[ 0 | disk ]) _fflatmap_ (fun byte0 =>
@@ -799,7 +854,7 @@ While we do not use this fact, the SuperBlock is usually stored redundantly on
 the disk, meaning we could verify its values with some of the redundant
 copies.
 
-Returning to our parsing efforts we must note that each attempt to pull out a
+Returning to our parsing efforts, we must note that each attempt to pull out a
 SuperBlock, GroupDescriptor, etc. may fail, and if this occurs, we want the
 entire File parsing function to propagate the failure. Here we will use the
 {\tt \_fflatmap\_} approach described above, treating the computation as a
@@ -1088,13 +1143,54 @@ Definition parseDeleted (disk: Disk) (superblock: SuperBlock)
   ).
 \end{lstlisting}
 
-\subsubsection{fetchInodeByte}
+With these functions, we can create a {\tt File} structure from an Ext2 file
+system. Next we discuss how to retrieve an arbitrary byte within the file
+given that structure.
 
-We need only one more attribute to create our File structure. File objects
-have a method which, given an arbitrary offset, returns the associated byte
-within the File, effectively linearizing byte access. This abstraction is
-quite necessary as each File system will have a different method of accessing
-the File bytes.
+\subsection{fetchByte Refresher and fileByte}
+
+Recalling, {\tt fetchByte} is our interface for retrieving a particular byte
+from a file structure. This interface treats files as linear sequences of
+bytes, regardless of their layout on disk. It effectively delegates to the
+{\tt Ext2.fileByte} function.
+
+\begin{lstlisting}
+Notation "f @[ i | d ]" := 
+  (fetchByte f.(fileId) d i) (at level 60).
+
+Fixpoint fetchByte (fileId: FileId) (disk: Disk)
+  : N->@Fetch Byte := 
+  match fileId with
+  | Ext2Id inodeIndex => Ext2.fileByte disk inodeIndex
+  | ...
+  end.
+\end{lstlisting}
+
+This function needs the same type of information needed to construct the {\tt
+File} structure. Unfortunately, we will recreate those same structures {\em
+every} time we retrieve a byte. This certainly will slow down our
+computations, but provides a very clean interface for accessing file data. We
+split the function into an outer layer, very similar to {\tt
+findAndParseFile} and a deeper function, {\tt fetchInodeByte}, which handles
+the more complicated bits.
+
+\begin{lstlisting}
+Definition fileByte (disk: Disk) (inodeIndex offset: N)
+  : @Fetch Byte :=
+  (findAndParseSuperBlock disk) _fflatmap_ (fun superblock =>
+  let groupId := ((inodeIndex - 1) (* One-indexed *)
+                  / superblock.(inodesPerGroup)) in
+  let inodeIndexInGroup :=
+    (inodeIndex - 1) mod superblock.(inodesPerGroup) in
+  (findAndParseGroupDescriptor disk superblock groupId) 
+    _fflatmap_ (fun groupdesc =>
+  (findAndParseInode disk superblock groupdesc inodeIndex)
+    _fflatmap_ (fun inode =>
+      fetchInodeByte disk superblock inode offset
+  ))).
+\end{lstlisting}
+
+\subsection{fetchInodeByte}
 
 Remembering the structure of Ext2 Inodes, we know that determining which data
 block a given byte of a file is located in may require walking one or more
@@ -1102,13 +1198,13 @@ levels of indirection. As this is a recursive operation (depending on the
 level of indirection,) we next describe a fixpoint which will pull out the
 block address associated with a given byte. This function checks if it has
 reached the final level of indirection, as indicated by the {\tt O} (Coq's
-zero) case; if so, it knows to grab the correct block address (a four byte
+zero) case; if so, it knows to grab the correct block address (a four-byte
 value) from the block of pointers.
 
 \begin{lstlisting}
 Fixpoint walkIndirection (disk: Disk) (superblock: SuperBlock)
-  (blockNumber indirectionPos: Z) (indirectionLevel: nat) 
-  : Exc Z :=
+  (blockNumber indirectionPos: N) (indirectionLevel: nat) 
+  : @Fetch BA :=
   match indirectionLevel with
   | O => 
     let bytePosition := (indirectionPos + 4 * blockNumber) in
@@ -1124,14 +1220,14 @@ how many blocks each indirection pointer is responsible for ({\tt
 unitSizeInBlocks},) and select the index of the block address within the array
 accordingly ({\tt nextBlockIndex}.) Using that, and the fact that each address
 is four bytes large, we jump to the correct offset within the pointer array,
-read those four bytes, and recurse accordingly.
+read those four bytes, and recurse.
 
 \begin{lstlisting}
 Fixpoint walkIndirection (disk: Disk) (superblock: SuperBlock)
   ...
   | S nextIndirectionLevel =>
     (* Type conversion *)
-    let exponent := Z.of_nat indirectionLevel in
+    let exponent := N.of_nat indirectionLevel in
     let unitSizeInBlocks := 
       ((blockSize superblock) ^ exponent) / (4 ^ exponent) in
     let nextBlockIndex := blockNumber / unitSizeInBlocks in
@@ -1149,22 +1245,22 @@ Fixpoint walkIndirection (disk: Disk) (superblock: SuperBlock)
 
 Building on top of this fixpoint, we can define a single function that, when
 given a Disk, SuperBlock, Inode and offset, returns the byte within the
-associated file at that offset. We destruct the function in to three parts.
+associated file at that offset. We destruct the function in to multiple parts.
 First, we check if the byte requested is within the file; if not, we
-immediately {\tt error}.
+immediately error.
 
 \begin{lstlisting}
 Definition fetchInodeByte (disk: Disk) (superblock: SuperBlock)
-  (inode: Inode) (bytePos: Z): Exc Z :=
+  (inode: Inode) (bytePos: N): @Fetch Byte :=
   if inode.(size) <=? bytePos then 
-    error
+    MissingAt bytePos
   else 
     ...
 \end{lstlisting}
 
 Next, we determine the block address using the recursive function described
 above. We begin by noting bounds on which data blocks are addressable directly
-and at the levels of indirection.
+and at the various levels of indirection.
 
 \begin{lstlisting}
 Definition fetchInodeByte (disk: Disk) (superblock: SuperBlock)
@@ -1184,9 +1280,12 @@ address from the Inode's {\tt block} list.
 \begin{lstlisting}
 Definition fetchInodeByte (disk: Disk) (superblock: SuperBlock)
     ...
-    let blockAddress :=
-    (if blockNumInFile <? directAddressable then
-      nth_error inode.(block) (Z.to_nat blockNumInFile)
+    (if blockNumInFile <=? directAddressable then
+      match (nth_error inode.(block) 
+                       (N.to_nat blockNumInFile)) with
+      | error => ErrorString "Data block not present"
+      | value v => Found v
+      end
     ...
 \end{lstlisting}
 
@@ -1196,15 +1295,16 @@ we need to call our {\tt walkIndirection} function.
 \begin{lstlisting}
 Definition fetchInodeByte (disk: Disk) (superblock: SuperBlock)
     ...
-     else if blockNumInFile <? directAddressable
-                               + indirect1Addressable then
-      (nth_error inode.(block) 12) 
-        _flatmap_ (fun indirectBlock =>
-        walkIndirection disk superblock
-          (blockNumInFile - directAddressable)
+     else if blockNumInFile <=? directAddressable
+                                + indirect1Addressable then
+      match (nth_error inode.(block) 12) with
+      | error => ErrorString "Indirection block not present"
+      | value indirectBlock => 
+        walkIndirection disk superblock 
+          (blockNumInFile - 12)
           (ba2Offset superblock indirectBlock) 
           O
-        )
+      end
     ...
 \end{lstlisting}
 
@@ -1215,28 +1315,32 @@ triple indirection block.
 \begin{lstlisting}
 Definition fetchInodeByte (disk: Disk) (superblock: SuperBlock)
     ...
-    else if blockNumInFile <? directAddressable
+    else if blockNumInFile <=? directAddressable
                               + indirect1Addressable
                               + indirect2Addressable then
-      (nth_error inode.(block) 13) 
-        _flatmap_ (fun doubleIndirectBlock =>
-        walkIndirection disk superblock 
-          (blockNumInFile - directAddressable
-                          - indirect1Addressable)
-          (ba2Offset superblock doubleIndirectBlock)
+      match (nth_error inode.(block) 13) with
+      | error => ErrorString 
+                   "Double indirection block not present"
+      | value doubleIndirectBlock =>
+        walkIndirection disk superblock
+          (blockNumInFile - 12 - (blockSize / 4)) 
+          (ba2Offset superblock doubleIndirectBlock) 
           (S O)
-        )
+      end
+
     else 
-      (nth_error inode.(block) 14) 
-        _flatmap_ (fun tripleIndirectBlock =>
+      match (nth_error inode.(block) 14) with
+      | error => ErrorString 
+                   "Triple indirection block not present"
+      | value tripleIndirectBlock =>
         walkIndirection disk superblock 
           (blockNumInFile - directAddressable
                           - indirect1Addressable
                           - indirect2Addressable)
-          (ba2Offset superblock tripleIndirectBlock) 
+          (ba2Offset superblock tripleIndirectBlock)
           (S (S O))
-      )
-    ) in
+      end
+    ) 
     ...
 \end{lstlisting}
 
@@ -1247,32 +1351,190 @@ position requested modulo the size of each data block.
 \begin{lstlisting}
 Definition fetchInodeByte (disk: Disk) (superblock: SuperBlock)
     ...
-    let blockAddress := (
+    (
       ...
-    ) in
-    blockAddress _flatmap_ (fun blockAddress =>
-      disk ((ba2Offset superblock blockAddress) 
-            + (bytePos mod blockSize))
+    ) _fflatmap_ (fun blockAddress =>
+      disk (blockSize * blockAddress + (bytePos mod blockSize))
     ).
 \end{lstlisting}
 
-With this function, we have completed each of the components needed to
-represent a file structure from an Ext2 disk. Putting them together (via {\tt
-mkFile}) allows us to use that file as the evidence needed for much of {\tt
-borland\_honeynet\_file}. In particularly, we know how to prove that the file
-{\tt isOnDisk} (if we can provide an Inode Index that matches it,) that it the
-file {\tt isDeleted} (if the deleted flag is set,) and that the file {\tt
-isGzip} (if the first three bytes are those of a Gzip.)
+With this function, we can conclude our discussion of the components needed
+to both construct {\tt File} structures and retrieve bytes using them from an
+Ext2 disk. We will next describe similar computation methods for tar archives.
 
-All that's left is to show that the decompressed tar \\
-{\tt looksLikeRootkit}.
+\section{Tar Structures and Computations+}
+\label{sec:tar}
+
+Our definition of rootkit installation made use of {\tt Tar.parseFileNames}, a
+function which retrieves included file names from a tar archive. As with the
+Ext2 file system, retrieving these file names requires a discussion of the tar
+file format. Unlike our Ext2 studies, which described the layout of a file
+system on a disk image, tar files are constructed within the context of a
+particular {\tt File}. This means that we will only access bytes on the disk
+through the {\tt file @[ offset | disk ]} construct; we need not worry about
+underlying file system mechanics.
+
+A tar file is composed of a sequence of (header, file content) pairs such that
+the header contains meta data about the file (including its name, size, owner,
+etc.) and the file data is padded to a multiple of 512 bytes. To retrieve all
+of the file names contained within a tar, we will need to read the ``first''
+file name from the tar header, read the file size from that header, skip the
+file contents and start again with the following header.
+
+\subsection{File Size from ASCII Octal}
+File size of a file within a tar can be determined by reading the 11 bytes
+starting at offset 124 of the tar header. The size is first encoded into
+octal, which is then represented as ASCII characters. Encoding in ASCII stems
+from the desire to keep the header human readable; the choice of octal is a
+bit more dubious, but {\it c'est la vie}. We implement our parsing with a
+simple recursive function which reads the next byte from a list and converts
+that into the encoded integer value. The value is multiplied by 8 raised to
+the length of rest of the list to account for octal order of magnitude. If the
+byte does not fall into the range associated with ascii `0' through `7', an
+{\tt error} is returned as anything else does not fit our encoding
+expectations.
 
 \begin{lstlisting}
-Lemma borland_honeynet_file:
-  ...
-  /\ Tar.looksLikeRootkit (gunzip_a file).
+Fixpoint fromOctalAscii (bytes: list Byte) : Exc N :=
+  match bytes with
+  | nil => value 0
+  | byte :: tail => match (fromOctalAscii tail) with
+    | error => error
+    | value rest => 
+      let byte := Ascii.N_of_ascii byte in
+      if (andb (48 <=? byte) (byte <=? 56))
+      then value (rest + ((byte-48)
+                          * (8 ^ (N.of_nat (length tail)))))
+      else error (* Invalid character *)
+    end
+  end.
 \end{lstlisting}
 
+\subsubsection{More Functional Idioms}
+
+The first hundred bytes of the header are dedicated to the filename
+(regardless of filename length); the filename is null-terminated. To get
+there, we will add three new functional idioms: {\tt upto}, {\tt flatten}, and
+{\tt takeWhile}. {\tt upto} (or {\tt range}) acts as a simple, infix way to
+create a sequence of integers between the provided end points; we skip its
+definition as it involves too much Coq-specific inside baseball. Similar to
+our need for {\tt \_flatmap\_}, {\tt flatten} takes a list of options and
+converts them to a list of the options' contents, skipping any {\tt error}s.
+Finally {\tt takeWhile} is a function that takes two parameters, a boolean
+predicate and a list of elements. This function returns the longest prefix of
+that list such that every element in the prefix satisfies the predicate.
+
+\begin{lstlisting}
+Fixpoint fetch_flatten {A} (lst: list (@Fetch A)): list A :=
+  match lst with
+    | (Found head) :: tail => head :: (fetch_flatten tail)
+    | _ :: tail => fetch_flatten tail
+    | nil => nil
+  end.
+
+Fixpoint takeWhile {A} (predicate: A->bool) (lst: list A)
+  : list A :=
+  match lst with
+  | head :: tail => 
+    if (predicate head) 
+    then head :: (takeWhile predicate tail)
+    else nil
+  | nil => nil
+end.
+\end{lstlisting}
+
+\subsubsection{Parsing a Single Header}
+Next, we will write a function that can both pull out the first filename from
+a tar as well as the first file's contents. Retrieving the file name requires
+reading the first hundred bytes of the tar and taking every character until a
+null is read. Due to our abstract concept of a file, extracting the first file
+from the tar is relatively straight forward. We need only parse the file size
+(making use of a sequence reader, {\tt seq\_list},) carry over the deleted
+status of the parent tar file, and drop the tar header from the data to create
+a File object (we do not provide any of the optional values.)
+
+\begin{lstlisting}
+Definition parseFirstFileNameAndSize (tar: File) (offset: N) 
+  (disk: Disk)
+  : @Fetch (string*N) :=
+  let firstHundredBytes := 
+    map (fetchByte tar.(fileId) disk) 
+        (offset upto (100 + offset)) in
+  let fileNameByte := fetch_flatten (takeWhile 
+    (fun (byte: @Fetch Byte) => match byte with
+      | Found (Ascii b1 b2 b3 b4 b5 b6 b7 b8) => 
+          b1 || b2 || b3 || b4 || b5 || b6 || b7 || b8
+      | _ => false       (* stop *)
+    end) firstHundredBytes) in
+  let fileName := list2string fileNameByte in
+  (* File Size is encoded in octal, represented as ASCII 
+     characters. It begins at offset 124 and runs for 11 
+     characters *)
+  (seq_list (fetchByte tar.(fileId) disk) (offset + 124) 11) 
+    _fflatmap_ (fun fileSizeList =>
+  match (fromOctalAscii fileSizeList) _map_ (fun fileSize =>
+    (fileName, fileSize)
+  ) with 
+  | error => ErrorString "Invalid Tar File Size"
+  | value v => Found v
+  end).
+\end{lstlisting}
+
+\subsubsection{Recursing Through}
+Now that we have a function which fetches the first filename and file from the
+tar, we can call it recursively, creating a new version of the tar file (i.e.
+minus the first file) with each step. We need to strip off the initial file
+header (512 bytes) plus the file size padded to 512 bytes. We won't use a
+fixpoint, opting instead for a parameter ({\tt nextCall}) to signify the
+recursive call; this is required by {\tt N.peano\_rect}, a library function
+which allows for recursive calls over binary numbers (including our {\tt Z}.)
+To see the full definition of {\tt Tar.parseFileNames}, please see the source
+code.
+
+\begin{lstlisting}
+Definition recFileNameFrom (nextCall: N -> list string) 
+  (tar: File) (remaining: N) (disk: Disk) : list string :=
+  if (remaining <=? 0)
+    then nil
+  else match 
+    (parseFirstFileNameAndSize tar 
+                               (tar.(fileSize) - remaining) 
+                               disk) with
+    | Found (fileName, firstSize) =>
+        (* Strip the first file out of the tar *)
+        (* Round to the nearest 512 *)
+        let firstFileSize := (
+          if (firstSize mod 512 =? 0)
+          then firstSize + 512
+          else 512 * (2 + (firstSize / 512))) in
+        fileName :: (nextCall (remaining - firstFileSize))
+    | _ => nil
+    end.
+\end{lstlisting}
+
+\subsection{Computing Over File Names}
+We also need to define the {\tt trimFileNamePrefix} function, which we want to
+return the string after the last directory delimiter (i.e. after the last `/'
+or '$\backslash$'.) To do this, we reuse our {\tt takeWhile} function applied
+to the reverse of the file name provided, taking bytes until we hit either `/'
+or `$\backslash$'. We then reverse that result to get the final, trimmed file
+name.
+
+\begin{lstlisting}
+Definition trimFileNamePrefix (fileName: string): string :=
+  let reversedName := rev fileName in
+  list2string
+    (rev (takeWhile (fun (char: ascii) => 
+                        (negb (orb (ascii_eqb char "/")
+                                   (ascii_eqb char "\"))))
+                   reversedName)).
+\end{lstlisting}
+
+With that, we have described all of the components needed to compute our
+lemma. We leave the details of the proof to our code samples, but at the high
+level, one can imagine how proving {\tt borland\_honeynet\_file} need only
+require we provide a File (by parsing it from the disk) as evidence. We can
+more or less compute each of the properties based on that file.
 
 \section{Lemmas, Computations, Definitions; Oh My!+}
 
@@ -1328,236 +1590,6 @@ trimFileNamePrefix} and {\tt ascii2Bytes} are two such examples which make
 explaining (and hopefully, understanding) the code samples easier. These
 functions are not necessary for the definitions, proofs, etc. where they
 appear; they simply make the code more terse.
-
-\section{Computing Our First Lemma*}
-
-Now that we have introduced these concepts, let's step through our {\tt
-borland\_honeynet\_file} proof, which will touch on each.
-
-
-\subsection{Parsing a File via INode}
-
-Our evidence relies on the {\it existence} of a {\tt File} which is on disk,
-deleted, etc., so our proof for this evidence need only provide such a {\tt
-File}. Hypothetically, this should be easy, as we can just pull the file from
-the disk image directly. We therefore use a parsing function (rather, a series
-of functions) to retrieve this file and provide it as demonstrative proof.
-Ultimately, we will need to call
-
-\begin{lstlisting}
-Ext2.findAndParseFile honeynet_image_a 23
-\end{lstlisting}
-
-To be confident in this function's results, however, we will need to
-understand how Ext2 file systems are laid out on disk. We will proceed by
-pealing off each layer of the call and review the data structures created.
-
-\subsection{Parsing File Names from a Tar}
-Once we've been given the unzipped tar file (i.e. from {\tt gunzip\_a}) we
-need to parse its structure well enough to pull out the file names it
-contains. This is not terribly dissimilar to pulling out SuperBlocks, Inodes,
-etc. from a disk, save that here we are working within the context of a single
-file. As files are abstracted to the point that they need only provide a
-function to access their data, we need not worry about underlying file system
-mechanics.
-
-A tar file is composed of a sequence of (header, file content) pairs such that
-the header contains meta data about the file (including its name, size, owner,
-etc.) and the file data is padded to a multiple of 512 bytes. To retrieve all
-of the file names contained within a tar, we will need to read the ``first''
-file name from the tar header, read the file size from that header, skip the
-file contents and start again with the following header.
-
-\subsubsection{File Size from ASCII Octal}
-File size of a file within a tar can be determined by reading the 11 bytes
-starting at offset 124 of the tar header. The size is first encoded into
-octal, which is then represented as ASCII characters. Encoding in ASCII stems
-from the desire to keep the header human readable; the choice of octal is a
-bit more dubious, but {\it c'est la vie}. We implement our parsing with a
-simple recursive function which reads the next byte from a list and converts
-that into the encoded integer value. The value is multiplied by 8 raised to
-the length of rest of the list to account for octal order of magnitude. If the
-byte does not fall into the range associated with ascii `0' through `7', an
-{\tt error} is returned as anything else does not fit our encoding
-expectations.
-
-\begin{lstlisting}
-Fixpoint fromOctalAscii (bytes: list Z) : Exc Z :=
-  match bytes with
-  | nil => value 0
-  | byte :: tail => match (fromOctalAscii tail) with
-    | error => error
-    | value rest => if (andb (48 <=? byte) (byte <=? 56))
-      then value (rest + ((byte-48)
-                          * (8 ^ (Z.of_nat (length tail)))))
-      else error (* Invalid character *)
-    end
-  end.
-\end{lstlisting}
-
-\subsubsection{More Functional Idioms}
-
-The first hundred bytes of the header are dedicated to the filename
-(regardless of filename length); the filename is null-terminated. To get
-there, we will add three new functional idioms: {\tt upto}, {\tt flatten}, and
-{\tt takeWhile}. {\tt upto} (or {\tt range}) acts as a simple, infix way to
-create a sequence of integers between the provided end points; we skip its
-definition as it involves too much Coq-specific inside baseball. Similar to
-our need for {\tt \_flatmap\_}, {\tt flatten} takes a list of options and
-converts them to a list of the options' contents, skipping any {\tt error}s.
-Finally {\tt takeWhile} is a function that takes two parameters, a boolean
-predicate and a list of elements. This function returns the longest prefix of
-that list such that every element in the prefix satisfies the predicate.
-
-\begin{lstlisting}
-Fixpoint flatten {A} (lst: list (Exc A)): list A :=
-  match lst with
-    | (value head) :: tail => head :: (flatten tail)
-    | error :: tail => flatten tail
-    | nil => nil
-  end.
-
-Fixpoint takeWhile {A} (predicate: A->bool) (lst: list A)
-  : list A :=
-  match lst with
-  | head :: tail => 
-    if (predicate head) 
-    then head :: (takeWhile predicate tail)
-    else nil
-  | nil => nil
-end.
-\end{lstlisting}
-
-\subsubsection{Parsing a Single Header}
-Next, we will write a function that can both pull out the first filename from
-a tar as well as the first file's contents. Retrieving the file name requires
-reading the first hundred bytes of the tar and taking every character until a
-null is read. Due to our abstract concept of a file, extracting the first file
-from the tar is relatively straight forward. We need only parse the file size
-(making use of a sequence reader, {\tt seq\_list},) carry over the deleted
-status of the parent tar file, and drop the tar header from the data to create
-a File object (we do not provide any of the optional values.)
-
-\begin{lstlisting}
-Definition parseFirstFileNameAndFile (tar: File)
-  : Exc (ByteString*File) :=
-  let firstHundredBytes := map tar.(data) (0 upto 100) in
-  let fileName := flatten (takeWhile 
-    (fun (byte: Exc Z) => match byte with
-      | error =>   false (* stop *)
-      | value 0 => false (* stop *)
-      | value _ => true  (* continue *)
-    end) firstHundredBytes) in
-  (seq_list tar.(data) 124 11) 
-    _flatmap_ (fun fileSizeList =>
-  (fromOctalAscii fileSizeList) _map_ (fun fileSize =>
-    (fileName, 
-      (mkFile None (* no id in child files*)
-              fileSize
-              (* Keep the deleted status of the tar *)
-              tar.(deleted)  
-              (* Header size = 512 *)
-              (shift tar.(data) 512)
-              (* Carry over fields from parent tar *)
-              tar.(lastAccess)
-              tar.(lastModification)
-              tar.(lastCreated)
-              tar.(lastDeleted)
-    ))
-  )).
-\end{lstlisting}
-
-\subsubsection{Recursing Through}
-Now that we have a function which fetches the first filename and file from the
-tar, we can call it recursively, creating a new version of the tar file (i.e.
-minus the first file) with each step. We need to strip off the initial file
-header (512 bytes) plus the file size padded to 512 bytes. We won't use a
-fixpoint, opting instead for a parameter ({\tt nextCall}) to signify the
-recursive call; this is required by {\tt N.peano\_rect}, a library function
-which allows for recursive calls over binary numbers (including our {\tt Z}.)
-To see the full definition of {\tt Tar.parseFileNames}, please see the source
-code.
-
-\begin{lstlisting}
-Definition recFileNameFrom (nextCall: File -> list ByteString) 
-  (remaining: File) : list ByteString :=
-  if (remaining.(fileSize) <=? 0)
-    then nil
-  else match (parseFirstFileNameAndFile remaining) with
-    | error => nil
-    | value (fileName, file) =>
-        (* Strip the first file out of the tar *)
-        (* Round to the nearest 512 *)
-        let firstFileSize := (
-          if (file.(fileSize) mod 512 =? 0)
-          then file.(fileSize) + 512
-          else 512 * (2 + (file.(fileSize) / 512))) in
-        let trimmedTar := 
-          (mkFile None (* No id in child files *)
-                  (remaining.(fileSize) - firstFileSize)
-                  remaining.(deleted) (* Parent's value *)
-                  (shift remaining.(data) firstFileSize)
-                  (* Use parent's values *)
-                  remaining.(lastAccess)
-                  remaining.(lastModification)
-                  remaining.(lastCreated)
-                  remaining.(lastDeleted)
-          ) in
-        fileName :: (nextCall trimmedTar)
-    end.
-\end{lstlisting}
-
-\subsection{Computing Over File Names}
-Now that we have pulled the list of file names from the tar file, we want the
-ability to prove that two, distinct file names satisfy {\tt systemFile}. As we
-discussed before, this means that we want to compare the file name (sans
-directory) with an a priori set of known system files. As a proof of concept,
-the list provided is slim, but it would be quite simple to extend it.
-
-\begin{lstlisting}
-Definition systemFile (fileName: ByteString) :=
-  In (trimFileNamePrefix fileName)
-     (map ascii2Bytes ("ps" :: "netstat" :: "top" :: "ifconfig" 
-                       :: "ssh" :: "rsync" :: "ProcMon.exe"
-                       :: nil)).
-\end{lstlisting}
-
-The {\tt ascii2Bytes} function simply converts each Coq ASCII character into a
-corresponding {\tt Z} to represent it as a byte. We use the functional {\tt
-map} idiom to run this function an every element of the list of Coq strings.
-
-\begin{lstlisting}
-Fixpoint ascii2Bytes (fileName: string): ByteString :=
-  match fileName with
-  | EmptyString => nil
-  | String char tail => 
-    (Z.of_N (N_of_ascii char)) :: (ascii2Bytes tail)
-  end.
-\end{lstlisting}
-
-We also need to define the {\tt trimFileNamePrefix} function, which we want to
-return the string after the last directory delimiter (i.e. after the last `/'
-or '$\backslash$'.) To do this, we reuse our {\tt takeWhile} function applied
-to the reverse of the file name provided, taking bytes until we hit either `/'
-or `$\backslash$'. We then reverse that result to get the final, trimmed file
-name.
-
-\begin{lstlisting}
-Definition trimFileNamePrefix (fileName: ByteString)
-  : ByteString :=
-  let reversedName := rev fileName in
-  rev (takeWhile 
-        (fun (char: Z) => 
-          (negb (orb (char =? 47)    (* `/' *)
-                     (char =? 92)))) (* `\' *)
-        reversedName).
-\end{lstlisting}
-
-With that, we have described all of the components needed to compute our
-lemma. We leave the details of the proof to our code samples, but at the high
-level, one can imagine how proving {\tt borland\_honeynet\_file} need only
-require we provide a File (by parsing it from the disk) as evidence. We can
-more or less compute each of the properties based on that file.
 
 \section{Timelines as Evidence*}
 \label{sec:timelines}
