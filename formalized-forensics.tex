@@ -501,7 +501,7 @@ Definition honeynet_image_a : Disk :=
 As disk images are too large to place in memory, the {\tt Disk} discussed
 above will have "holes." We initially gravitated towards the Option monad
 ({\tt Exc} in Coq,) but realized that, if we were to chain options (see
-\ref{subsec:ext2functional},) we would have no feedback on {\em where} the
+\ref{subsec:functionalext2},) we would have no feedback on {\em where} the
 retrieval operations failed. We therefore created a new inductive type {\tt
 Fetch}, which can be instantiated as a {\tt Found} when the byte (or whatever
 data type) is present, a {\tt MissingAt} when not present, and an {\tt
@@ -1362,37 +1362,186 @@ With this function, we can conclude our discussion of the components needed
 to both construct {\tt File} structures and retrieve bytes using them from an
 Ext2 disk. We will next describe similar computation methods for tar archives.
 
-\section{Tar Structures and Computations+}
+\section{Tar Archive Structures and Computations+}
 \label{sec:tar}
 
-Our definition of rootkit installation made use of {\tt Tar.parseFileNames}, a
-function which retrieves included file names from a tar archive. As with the
-Ext2 file system, retrieving these file names requires a discussion of the tar
-file format. Unlike our Ext2 studies, which described the layout of a file
-system on a disk image, tar files are constructed within the context of a
-particular {\tt File}. This means that we will only access bytes on the disk
-through the {\tt file @[ offset | disk ]} construct; we need not worry about
-underlying file system mechanics.
+Our definition of rootkit installation made use of \\{\tt Tar.parseFileNames},
+a function which retrieves a list of all file names includes from a tar
+archive. As with the Ext2 file system, retrieving these file names requires a
+discussion of the tar file format. Unlike our Ext2 studies, which described
+the layout of a file system on a disk image, tar files are constructed within
+the context of a particular {\tt File}. This means that we will only access
+bytes on the disk through the {\tt file @[ offset | disk ]} construct; we need
+not worry about underlying file system mechanics.
 
 A tar file is composed of a sequence of (header, file content) pairs such that
 the header contains meta data about the file (including its name, size, owner,
 etc.) and the file data is padded to a multiple of 512 bytes. To retrieve all
-of the file names contained within a tar, we will need to read the ``first''
-file name from the tar header, read the file size from that header, skip the
-file contents and start again with the following header.
+of the file names contained within a tar, we will need to read one file name
+from the tar header, read the file size from that header, skip the file
+contents and start again with the following header.
+
+\subsection{Parsing a Single Header}
+
+First, we will write a function that can pull out a filename and associated
+file size. As fetching either could fail, we will chain the two actions via a
+flatmap. We will provide this function a tar file as well as an offset within
+that tar file to indicate where the header in question begins. Fetching all
+pairs will be a matter of shifting the ``start'' of the file again and again.
+
+\begin{lstlisting}
+Definition parseFileNameAndSize (tar: File) (offset: N) 
+  (disk: Disk)
+  : @Fetch (string*N) :=
+  let byteData := shift (fetchByte tar.(fileId) disk) 
+                        offset in
+  (parseFileName byteData) _fflatmap_ (fun name =>
+  (parseFileSize byteData) _fmap_ (fun size =>
+    (name, size)
+  )).
+\end{lstlisting}
+
+\subsection{More Functional Idioms}
+
+The first hundred bytes of the header are dedicated to the filename,
+regardless of filename length. To determine the file name, we will read those
+bytes and scan for the null-terminating string. Before we can explain how, we
+will create and discuss a few new functional idioms.
+
+{\tt upto} (the infix form of the {\tt range} function) acts as a simple
+method for creating a sequence of integers between the provided end points. We
+skip its definition as it involves too much Coq-specific inside baseball
+around recursing over {\tt N}s.
+
+\begin{lstlisting}
+Compute (1 upto 4).
+     = 1 :: 2 :: 3 :: nil
+     : list N
+\end{lstlisting}
+
+The {\tt takeWhile} function takes two parameters, a boolean predicate and a
+list of elements. It returns the longest prefix of that list such that every
+element in the prefix sublist satisfies the predicate.
+
+\begin{lstlisting}
+Fixpoint takeWhile {A} (predicate: A->bool) (lst: list A)
+  : list A :=
+  match lst with
+  | head :: tail => 
+    if (predicate head) 
+    then head :: (takeWhile predicate tail)
+    else nil
+  | nil => nil
+end.
+\end{lstlisting}
+
+The {\tt map} function from Coq's standard library takes a transformation
+function and a list and generates a list such that each element is composed of
+that transformation applied to the elements of the original list. In this
+example, we convert each element of the integer list into a boolean indicating
+whether or not the element is even.
+
+\begin{lstlisting}
+Compute (map (fun el:N => el mod 2 =? 0)
+             (1 upto 6)).
+     = false :: true :: false :: true :: false :: nil
+     : list bool
+\end{lstlisting}
+
+The built-in {\tt fold\_left} function requires a bit more explanation.
+``Fold'' is a very flexible and powerful tool which allows one to convert a
+list of elements into a single value, given some combinator. This allows users
+to sum the elements in a list, find distinct values, or even re-implement {\tt
+map}. The interface accepts a list, a starting value for the ``accumulator''
+and a function which accepts a pair of (accumulator, next value). This
+function is called for each element in the list (which is passed via the
+second parameter) and the result is provided to the next iteration (as the
+accumulator).
+
+We can use fold to find the sum and length of a list of numbers:
+
+\begin{lstlisting}
+Compute (fold_left (fun (acc: N*N) (next: N) =>
+                        ((fst acc) + next, (snd acc) + 1))
+                   (5 :: 4 :: 3 :: nil)
+                   (0, 0)).
+     = (12, 3)
+     : N * N
+\end{lstlisting}
+
+Or we could reverse a list:
+
+\begin{lstlisting}
+Compute (fold_left (fun (acc: list N) (next: N) =>
+                        next :: acc)
+                   (1 :: 2 :: 3 :: nil)
+                   nil).
+     = 3 :: 2 :: 1 :: nil
+     : list N
+\end{lstlisting}
+
+\subsection{File Name}
+
+Retrieving the file name requires reading the first hundred bytes of the
+header and taking every character until the string is terminated (via a null
+character.) As each attempt to read from the file could fail, and we would
+like that failure to percolate up, we will use {\tt fold\_left} to both
+propagate failures and collect bytes. The function we provide to it will
+accumulate via a {\tt Fetch (list Byte)}; should anything go wrong, the {\tt
+Fetch} will become a {\tt MissingAt} or {\tt ErrorString}. If everything
+proceeds as planned, the {\tt Fetch} will contain a list of the read bytes.
+This list will be in reverse order as we will be prepending each element to
+the accumulated list. As an added complication, when we reach a null character
+(indicated by {\tt Ascii.zero}), we stop accumulation and can ignore the {\tt
+next} value. In the end, we want to strip off the null character, reverse the
+list of bytes (so that it is in correct order) and convert it to a {\tt
+string} for future manipulation via the {\tt list2string} function.
+
+\begin{lstlisting}
+Definition parseFileName (bytes: ByteData) :=
+  let firstHundredBytes := map bytes (0 upto 100) in
+  let perByte := fun (acc: @Fetch (list Byte) )
+                     (next: @Fetch Byte) =>
+    match (acc, next) with
+    | (Found (hd :: tl), Found next) =>
+        if (ascii_eqb hd Ascii.zero)  (* Null *)
+        then acc
+        else Found (next :: hd :: tl)
+    | (Found _, Found next) =>
+        Found (next :: nil)
+    | (Found (hd :: tl), MissingAt idx) =>
+        if (ascii_eqb hd Ascii.zero)  (* Null *)
+        then acc
+        else MissingAt idx
+    | (Found (hd :: tl), ErrorString str) =>
+        if (ascii_eqb hd Ascii.zero)  (* Null *)
+        then acc
+        else ErrorString str
+    | (other, _) => other
+    end in
+  (fold_left perByte firstHundredBytes (Found nil)) 
+    _fmap_ (fun byteList => match byteList with
+    (* Strip off the null character *)
+    | hd :: tl => list2string (rev tl)
+    | _ => EmptyString
+    end).
+\end{lstlisting}
+
 
 \subsection{File Size from ASCII Octal}
-File size of a file within a tar can be determined by reading the 11 bytes
-starting at offset 124 of the tar header. The size is first encoded into
+
+The size of a file within a tar can be determined by reading the 11 bytes
+starting at offset 124 of the associated header. The size is first encoded into
 octal, which is then represented as ASCII characters. Encoding in ASCII stems
 from the desire to keep the header human readable; the choice of octal is a
 bit more dubious, but {\it c'est la vie}. We implement our parsing with a
-simple recursive function which reads the next byte from a list and converts
-that into the encoded integer value. The value is multiplied by 8 raised to
-the length of rest of the list to account for octal order of magnitude. If the
-byte does not fall into the range associated with ascii `0' through `7', an
-{\tt error} is returned as anything else does not fit our encoding
-expectations.
+simple recursive function which reads the next byte (i.e. character) from a
+list and converts that into the encoded integer value. The value is multiplied
+by 8 raised to the length of rest of the list to account for octal order of
+magnitude. If the byte does not fall into the range associated with ascii `0'
+through `7', an {\tt error} is returned as anything else does not fit our
+encoding expectations. Note that {\tt value} and {\tt error} are the two
+subtypes of {\tt Exc}, Coq's native option type.
 
 \begin{lstlisting}
 Fixpoint fromOctalAscii (bytes: list Byte) : Exc N :=
@@ -1410,86 +1559,31 @@ Fixpoint fromOctalAscii (bytes: list Byte) : Exc N :=
   end.
 \end{lstlisting}
 
-\subsubsection{More Functional Idioms}
-
-The first hundred bytes of the header are dedicated to the filename
-(regardless of filename length); the filename is null-terminated. To get
-there, we will add three new functional idioms: {\tt upto}, {\tt flatten}, and
-{\tt takeWhile}. {\tt upto} (or {\tt range}) acts as a simple, infix way to
-create a sequence of integers between the provided end points; we skip its
-definition as it involves too much Coq-specific inside baseball. Similar to
-our need for {\tt \_flatmap\_}, {\tt flatten} takes a list of options and
-converts them to a list of the options' contents, skipping any {\tt error}s.
-Finally {\tt takeWhile} is a function that takes two parameters, a boolean
-predicate and a list of elements. This function returns the longest prefix of
-that list such that every element in the prefix satisfies the predicate.
+Retrieving the file size makes use of our sequence reader, {\tt seq\_list}, to
+read the eleven bytes starting at the 124th position within the tar header.
+This list of bytes is converted into a single number using the {\tt
+fromOctalAscii} function described above.
 
 \begin{lstlisting}
-Fixpoint fetch_flatten {A} (lst: list (@Fetch A)): list A :=
-  match lst with
-    | (Found head) :: tail => head :: (fetch_flatten tail)
-    | _ :: tail => fetch_flatten tail
-    | nil => nil
-  end.
-
-Fixpoint takeWhile {A} (predicate: A->bool) (lst: list A)
-  : list A :=
-  match lst with
-  | head :: tail => 
-    if (predicate head) 
-    then head :: (takeWhile predicate tail)
-    else nil
-  | nil => nil
-end.
-\end{lstlisting}
-
-\subsubsection{Parsing a Single Header}
-Next, we will write a function that can both pull out the first filename from
-a tar as well as the first file's contents. Retrieving the file name requires
-reading the first hundred bytes of the tar and taking every character until a
-null is read. Due to our abstract concept of a file, extracting the first file
-from the tar is relatively straight forward. We need only parse the file size
-(making use of a sequence reader, {\tt seq\_list},) carry over the deleted
-status of the parent tar file, and drop the tar header from the data to create
-a File object (we do not provide any of the optional values.)
-
-\begin{lstlisting}
-Definition parseFirstFileNameAndSize (tar: File) (offset: N) 
-  (disk: Disk)
-  : @Fetch (string*N) :=
-  let firstHundredBytes := 
-    map (fetchByte tar.(fileId) disk) 
-        (offset upto (100 + offset)) in
-  let fileNameByte := fetch_flatten (takeWhile 
-    (fun (byte: @Fetch Byte) => match byte with
-      | Found (Ascii b1 b2 b3 b4 b5 b6 b7 b8) => 
-          b1 || b2 || b3 || b4 || b5 || b6 || b7 || b8
-      | _ => false       (* stop *)
-    end) firstHundredBytes) in
-  let fileName := list2string fileNameByte in
-  (* File Size is encoded in octal, represented as ASCII 
-     characters. It begins at offset 124 and runs for 11 
-     characters *)
-  (seq_list (fetchByte tar.(fileId) disk) (offset + 124) 11) 
+Definition parseFileSize (bytes: ByteData) :=
+  (seq_list bytes 124 11)
     _fflatmap_ (fun fileSizeList =>
-  match (fromOctalAscii fileSizeList) _map_ (fun fileSize =>
-    (fileName, fileSize)
-  ) with 
-  | error => ErrorString "Invalid Tar File Size"
-  | value v => Found v
-  end).
+    match (fromOctalAscii fileSizeList) with
+    | error => ErrorString "Invalid Tar Size"
+    | value size => Found size
+    end).
 \end{lstlisting}
 
 \subsubsection{Recursing Through}
-Now that we have a function which fetches the first filename and file from the
-tar, we can call it recursively, creating a new version of the tar file (i.e.
-minus the first file) with each step. We need to strip off the initial file
-header (512 bytes) plus the file size padded to 512 bytes. We won't use a
-fixpoint, opting instead for a parameter ({\tt nextCall}) to signify the
-recursive call; this is required by {\tt N.peano\_rect}, a library function
-which allows for recursive calls over binary numbers (including our {\tt Z}.)
-To see the full definition of {\tt Tar.parseFileNames}, please see the source
-code.
+
+Now that we have a function which fetches one filename and size from the tar,
+we can call it recursively, moving the initial offset with each step.  We need
+to ignore the previous file header (512 bytes) plus the file size padded to
+512 bytes. We won't use a fixpoint, opting instead for a parameter ({\tt
+nextCall}) to signify the recursive call; this is required by {\tt
+N.peano\_rect}, a library function which allows for recursive calls over
+binary numbers. To see the full definition of {\tt Tar.parseFileNames}, please
+see the source code.
 
 \begin{lstlisting}
 Definition recFileNameFrom (nextCall: N -> list string) 
@@ -1497,25 +1591,26 @@ Definition recFileNameFrom (nextCall: N -> list string)
   if (remaining <=? 0)
     then nil
   else match 
-    (parseFirstFileNameAndSize tar 
-                               (tar.(fileSize) - remaining) 
-                               disk) with
-    | Found (fileName, firstSize) =>
-        (* Strip the first file out of the tar *)
+    (parseFileNameAndSize tar 
+                          (tar.(fileSize) - remaining) 
+                          disk) with
+    | Found (fileName, fileSize) =>
+        (* Strip the next file out of the tar *)
         (* Round to the nearest 512 *)
-        let firstFileSize := (
-          if (firstSize mod 512 =? 0)
-          then firstSize + 512
-          else 512 * (2 + (firstSize / 512))) in
-        fileName :: (nextCall (remaining - firstFileSize))
+        let nextFileSize := (
+          if (fileSize mod 512 =? 0)
+          then fileSize + 512
+          else 512 * (2 + (fileSize / 512))) in
+        fileName :: (nextCall (remaining - nextFileSize))
     | _ => nil
     end.
 \end{lstlisting}
 
 \subsection{Computing Over File Names}
+
 We also need to define the {\tt trimFileNamePrefix} function, which we want to
 return the string after the last directory delimiter (i.e. after the last `/'
-or '$\backslash$'.) To do this, we reuse our {\tt takeWhile} function applied
+or '$\backslash$'.) To do this, we use our {\tt takeWhile} function applied
 to the reverse of the file name provided, taking bytes until we hit either `/'
 or `$\backslash$'. We then reverse that result to get the final, trimmed file
 name.
@@ -1525,145 +1620,73 @@ Definition trimFileNamePrefix (fileName: string): string :=
   let reversedName := rev fileName in
   list2string
     (rev (takeWhile (fun (char: ascii) => 
-                        (negb (orb (ascii_eqb char "/")
-                                   (ascii_eqb char "\"))))
-                   reversedName)).
+                         (negb (orb (ascii_eqb char "/")
+                                    (ascii_eqb char "\"))))
+                    reversedName)).
 \end{lstlisting}
 
-With that, we have described all of the components needed to compute our
-lemma. We leave the details of the proof to our code samples, but at the high
-level, one can imagine how proving {\tt borland\_honeynet\_file} need only
-require we provide a File (by parsing it from the disk) as evidence. We can
-more or less compute each of the properties based on that file.
-
-\section{Lemmas, Computations, Definitions; Oh My!+}
-
-We have now come across several core concepts of this research, and it is easy
-to see how they might be confused. Before we continue, let us solidify our
-understanding of each category.
-
-We are most familiar with {\bf definitions}, which provide a name for a common
-understanding of a forensics concept. For example, we provided definitions for
-{\tt isGzip}, {\tt looksLikeRootkit}, etc. While one of the wider goals of
-this research is to provide a set of such common definitions, this paper only
-describes several which are relevant to the Honeynet example. Other
-definitions might include ``web page access'' (e.g. by inspecting browser
-history,) ``in contact with'' (e.g. there exists records of email
-communication,) and ``last time logged in.'' Note that definitions are, at
-their core, the choice of their creators; forming a consensus on a definition
-is the only way it may provide authority. This also means that the possibility
-for multiple definitions is present (as we have shown with our two definitions
-for file existence.)
-
-Definitions are most often built by combining aspects of various abstract {\bf
-data structures}, ``universal'' representations of data-related concepts
-within forensics. We have seen these used to represent files, and we will see
-them represent various Ext2 file system structures, as well as events in a
-reconstructed timeline. These structures serve as a way of separating
-particular parsing computations (which build the structures) from definitions
-involving the structures. While not complete, this division allows us to
-reason about our definitions using only the data representations, not the
-parsing algorithms. It should be relatively simple for someone to write a
-different parser which produces the same structures without affecting many of
-the definitions.
-
-
-The Honeynet competition we have described required researchers provide
-``{\bf evidence}'' or ``{\bf proof}'' that the disk had been compromised by a
-rootkit. This required that the researchers both define what acceptable
-evidence would look like as well as provide that type of evidence for the
-attacked server. This led each researcher to give different forms of evidence
-depending on what that researcher found to be acceptable. The types of
-evidence provided are codified in our definitions (as described above,) but
-the evidence they gave maps closer to a Coq {\bf lemma} or proof. The evidence
-will be in the form of a proof term, which the author of a proof can build up
-using Coq's tactic system. Given a proof that the disk satisfies the
-definitions provided, it is only up to a reviewer to determine whether or not
-the {\em definitions} are satisfactory. We provide a list of tactics that
-generate the proof term for each of our lemmas in the source linked to in our
-appendix, and we will expand the implications of this topic further, in
-section \ref{sec:unknown}.
-
-Finally, the code written for this research is sprinkled with {\bf utility
-functions} to perform (mostly) simple transformations. {\tt
-trimFileNamePrefix} and {\tt ascii2Bytes} are two such examples which make
-explaining (and hopefully, understanding) the code samples easier. These
-functions are not necessary for the definitions, proofs, etc. where they
-appear; they simply make the code more terse.
-
-\section{Timelines as Evidence*}
+\section{Timelines as Evidence}
 \label{sec:timelines}
 
 A second type of evidence provided by the Honeynet researchers (particularly
-from Jason Lee\cite{lee}) had the form of a timeline of events to explain
-what the researchers believed happened to the infected server. A timeline is
+from Jason Lee\cite{lee}) had the form of a timeline of events to explain what
+the researchers believed happened to the infected server. A {\tt Timeline} is
 simply an ordered sequence of events; examples of events include file
 modification, user login, system restart, etc. Timelines are certainly useful
 as a form of evidence as they provide a narrative of what took place. They are
 also provable artifacts, as a timeline is only sound as long as there is
 evidence for each of its events and if the order of those events can be
-verified. We consider events to be in the correct sequence if events earlier
-are {\tt beforeOrConcurrent} events later in the sequence.
+verified. 
 
 \begin{lstlisting}
-Definition isInOrder (timeline: Timeline) :=
-  (* Events are in the correct sequence *)
-  (forall (index: nat),
-    (index < ((length timeline) - 1) )%nat ->
-      match (nth_error timeline index, 
-             nth_error timeline (index + 1)) with
-      | (value lhsEvent, value rhsEvent) => 
-        beforeOrConcurrent lhsEvent rhsEvent
-      | _ => False
-      end).
-
-Definition isSound (timeline: Timeline) (disk: Disk) :=
-  (forall (event: Event),
-    (* Event is evident from the disk *)
-    (In event timeline) -> (foundOn event disk))
-  /\ isInOrder timeline.
+Definition Timeline: Type := list Event.
 \end{lstlisting}
 
 \subsection{Events and Their Relations}
 
-We next consider an {\tt Event} type in its various forms. For files, we will
-see four events: access, creation, modification, and deletion. We will
+The {\tt Event} type currently consists of four forms, representing four
+file-related events: access, creation, modification, and deletion. We will
 represent these events with two parameters, a unix-style timestamp of the
-event's execution and a file system identifier (as would be found in a File.)
+event's execution and a file system identifier (as would be found in a {\tt
+File}.)
 
 \begin{lstlisting}
 Inductive Event: Type :=
-  | FileAccess: Z -> Z -> Event
-  | FileModification: Z -> Z -> Event
-  | FileCreation: Z -> Z -> Event
-  | FileDeletion: Z -> Z -> Event
+  | FileAccess: N -> FileId -> Event
+  | FileModification: N -> FileId -> Event
+  | FileCreation: N -> FileId -> Event
+  | FileDeletion: N -> FileId -> Event
 \end{lstlisting}
 
 While not all conceivable events have a timestamp, those that do make the {\tt
-beforeOrConcurrent} definition significantly simpler. To prove that one event
-happens {\tt beforeOrConcurrent} another, simply compare the timestamps.
+beforeOrConcurrent} definition significantly simpler. We provide a helper
+function {\tt timestampOf}, which provides the timestamp for all existing
+{\tt Event} types. With that, proving one event happend {\tt
+beforeOrConcurrent} with another is a simple matter of comparing timestamps.
 
 \begin{lstlisting}
-Definition timestampOf (event: Event) : Exc Z :=
+Definition timestampOf (event: Event) : Exc N :=
   match event with
   | FileAccess timestamp _ => value timestamp
   | FileModification timestamp _ => value timestamp
   | FileCreation timestamp _ => value timestamp
   | FileDeletion timestamp _ => value timestamp
-  | _ => error.
+  end.
 
 Definition beforeOrConcurrent (lhs rhs: Event) :=
   match (timestampOf lhs, timestampOf rhs) with
-  | (value lhs_time, value rhs_time) => lhs_time <= rhs_time
-  | _ => False.
+  | (value lhs_time, value rhs_time) => lhs_time <=? rhs_time
+  | _ => false.
 \end{lstlisting}
 
 Note that the {\tt beforeOrConcurrent} relation need not be limited to events
 where we have a concrete timestamp. We could extend the definition of an event
 to include execution of shell scripts, for example, which have a clear
-relative ordering of commands but do not have absolute time.
+relative ordering of commands but do not have absolute time. In this
+situation, an {\tt Event} might include a line number, which could be compared
+to others.
 
-\subsection{Finding Events and Their Existence}
+\subsection{The Existence of Events}
 
 For a Timeline to be valid, each of the events in the timeline must follow
 from the disk image. While conceivable events may not be associated with
@@ -1672,24 +1695,62 @@ confirms their relevance. We simply check that there exists a file on disk
 that shares the same file system identifier and MAC time.
 
 \begin{lstlisting}
-Definition foundOn (event: Event) (disk: Disk) : Prop :=
-  exists (file: File),
-    isOnDisk file disk
-    /\ (match event with
-        | FileAccess timestamp fsId =>
-            file.(fileSystemId) = value fsId
-            /\ file.(lastAccess) = value timestamp
-       | FileModification timestamp fsId =>
-            file.(fileSystemId) = value fsId
-            /\ file.(lastModification) = value timestamp
-       | FileCreation timestamp fsId =>
-            file.(fileSystemId) = value fsId
-            /\ file.(lastCreated) = value timestamp
-       | FileDeletion timestamp fsId =>
-            file.(fileSystemId) = value fsId
-            /\ file.(lastDeleted) = value timestamp
-       end).
+Definition foundOn (event: Event) (disk: Disk) :=
+  match event with
+  | FileAccess timestamp fs => exists (file: File),
+        isOnDisk file disk
+        /\ fs = file.(fileId)
+        /\ file.(lastAccess) = value timestamp
+  | FileModification timestamp fs => exists (file: File),
+        isOnDisk file disk
+        /\ fs = file.(fileId)
+        /\ file.(lastModification) = value timestamp
+  | FileCreation timestamp fs => exists (file: File),
+        isOnDisk file disk
+        /\ fs = file.(fileId)
+        /\ file.(lastCreated) = value timestamp
+  | FileDeletion timestamp fs => exists (file: File),
+        isOnDisk file disk
+        /\ fs = file.(fileId)
+        /\ file.(lastDeleted) = value timestamp
+  end.
 \end{lstlisting}
+
+\subsection{Soundness}
+
+To verify that a Timeline is sound, we will defer to each consecutive pair of
+events. If each of these pairs is sound, we declare the entire Timeline to be
+as well. To aid our reflection proofs, we will match each event with its
+associated {\tt File}, creating the {\tt eventFiles} variable. Then, we will
+pair each of these with its neighbor such that we have a list of the first
+event paired with the second, the second with the third, and so forth.
+
+\begin{lstlisting}
+Definition isSound (timeline: Timeline) (disk: Disk) :=
+  exists (files: list File),
+    let eventFiles := combine timeline files in
+    let staggered := combine eventFiles (skipn 1 eventFiles) in
+    length files = length timeline
+    /\ forall (pair: (Event*File)*(Event*File)),
+        In pair staggered -> isSoundPair disk pair.
+\end{lstlisting}
+
+The final piece to defining a sound Timeline is to define {\tt isSoundPair},
+which simply needs to show that both events are found on disk and that the
+first is {\tt beforeOrConcurrent} with the second. Note that we throw away the
+matched {\tt File} structures; they are only useful to the associated
+reflection proof.
+
+\begin{lstlisting}
+Definition isSoundPair (disk: Disk) 
+  (pair: (Event*File)*(Event*File)) :=
+  let (lhsEvent, _) := fst pair in
+  let (rhsEvent, _) := snd pair in
+  foundOn lhsEvent disk
+  /\ foundOn rhsEvent disk
+  /\ beforeOrConcurrent lhsEvent rhsEvent = true.
+\end{lstlisting}
+
 
 \subsection{Applying to Honeynet}
 With all of these definitions we can now see how one would provide evidence
@@ -1701,47 +1762,47 @@ annotations into Coq; in the conversion we lose file name (instead, we use
 inode number) and pretty-printed dates (opting for unix time stamps.)
 
 \begin{lstlisting}
+Definition lee_timeline :=
+  (* Mar 16 01 12:36:48 *)
+    (* rootkit lk.tar.gz downloaded *)
+      (FileModification 984706608 (Ext2Id 23))
+  (* Mar 16 01 12:44:50 *)
+    (* Gunzip and Untar rootkit lk.tar.gz *)
+      :: (FileAccess 984707090 (Ext2Id 23))
+    (* change ownership of rootkit files to root.root *)
+      :: (FileAccess 984707102 (Ext2Id 30130))
+    (* deletion of original /bin/netstat *)
+      :: (FileDeletion 984707102 (Ext2Id 30188))
+    (* insertion of trojan netstat *)
+      :: (FileCreation 984707102 (Ext2Id 2056))
+    (* deletion of original /bin/ps *)
+      :: (FileDeletion 984707102 (Ext2Id 30191))
+    (* insertion of trojan ps *)
+      :: (FileCreation 984707102 (Ext2Id 2055))
+    (* deletion of origin /sbin/ifconfig *)
+      :: (FileDeletion 984707102 (Ext2Id 48284))
+    (* insertion of trojan ifconfig *)
+      :: (FileCreation 984707102 (Ext2Id 2057))
+  (* Mar 16 01 12:45:03 *)
+    (* the copy of service files to /etc *)
+      :: (FileAccess 984707103 (Ext2Id 30131))
+    (* hackers services file copied on top of original *)
+      :: (FileCreation 984707103 (Ext2Id 26121))
+  (* Mar 16 01 12:45:05 *)
+    (* deletion of rootkit lk.tar.gz *)
+      :: (FileDeletion 984707105 (Ext2Id 23))
+  :: nil.
+
 Lemma lee_honeynet_file:
-  (Timeline.isSound (
-    (* Mar 16 01 12:36:48 *)
-      (* rootkit lk.tar.gz downloaded *)
-        (FileModification 984706608 23)
-    (* Mar 16 01 12:44:50 *)
-      (* Gunzip and Untar rootkit lk.tar.gz *)
-        :: (FileAccess 984707090 23)
-      (* change ownership of rootkit files to root.root *)
-        :: (FileAccess 984707102 30130)
-      (* deletion of original /bin/netstat *)
-        :: (FileDeletion 984707102 30188)
-      (* insertion of trojan netstat *)
-        :: (FileCreation 984707102 2056) 
-      (* deletion of original /bin/ps *)
-        :: (FileDeletion 984707102 30191)
-      (* insertion of trojan ps *)
-        :: (FileCreation 984707102 2055) 
-      (* deletion of origin /sbin/ifconfig *)
-        :: (FileDeletion 984707102 48284)
-      (* insertion of trojan ifconfig *)
-        :: (FileCreation 984707102 2057) 
-    (* Mar 16 01 12:45:03 *)
-      (* the copy of service files to /etc *)
-        :: (FileAccess 984707103 30131)  
-      (* hackers services file copied on top of original *)
-        :: (FileCreation 984707103 26121)
-    (* Mar 16 01 12:45:05 *)
-      (* deletion of rootkit lk.tar.gz *)
-        :: (FileDeletion 984707105 23)   
-    :: nil)
-    honeynet_image_a
-  ).
+  Timeline.isSound lee_timeline honeynet_image_a.
 \end{lstlisting}
 
-Seeing as the definition of {\tt Timeline.isSound} is composed of two
-computable relations, proving this lemma boils down to a series of
-computations. The full list of tactics used to build up the proof is linked
-from the appendix.
+As with {\tt borland\_rootkit}, proving this lemma is as simply as applying a
+reflection proof, computing, and apply the {\tt reflexivity} tactic. See the
+code linked in the appendix for details.
 
-\section{Are These Definitions Sufficient?*}
+
+\section{Are These Definitions Sufficient?+}
 \label{sec:sufficient}
 
 In this paper, we have provided several definitions for types of evidence that
