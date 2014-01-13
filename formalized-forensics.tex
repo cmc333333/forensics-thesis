@@ -1918,13 +1918,14 @@ the further implications in the next section.
 \section{Future Work}
 \label{sec:future}
 
-Anyone not already familiar with Coq's tactic systems would be quite confused
-by the steps needed to prove any of these lemmas. On the other hand, those who
-are familiar with Coq might find the compute-heavy nature of these definitions
-to be outside of their comfort zone. Compound that with the rather large
-numbers needed, and it becomes safe to say that very few people would be able
-to use this system in its current state, and none work in the professional
-forensics space.
+The Coq tactic system is not a particularly approachable language, and we
+would not expect forensics analysts to prove lemmas via anything more than a
+reflective proof. On the other hand, those who are familiar with Coq might
+find the compute-heavy nature of these definitions to be outside of their
+comfort zone. Compound that with the rather large (at least, for Coq) numbers
+needed, and it becomes safe to say that very few people would be able to
+use this system as it stands, and none work in the professional forensics
+space.
 
 A potential solution appears in two phases. First, these proofs are ripe for
 automation. Providing one of a pre-defined set of evidence types and a disk
@@ -1934,6 +1935,33 @@ or other interface for describing the types of evidence needed and allow a
 program to search and generate proofs. This connects with wider work by Radha
 Jagadeesan, Corin Pitcher, and James Riely of DePaul University, which
 includes efforts to automate forensic methods.
+
+The proof-by-reflection technique has shown itself quite useful in this
+research. However, we have largely only provided ``one-way'' reflection
+proofs; that is, that the computational version implies the {\tt Prop}
+version. As a matter of cleanliness, these lemmas should be extended to show
+that the latter also implies the former. This would prove the two versions to
+be isomorphic, which would allow automated programs to mix and match versions
+as needed. 
+
+We could also extend that isomorphism to include additional (beyond simply
+boolean and easy-to-read {\tt Prop}) forms of the definitions. Providing many
+different (yet convertible) forms of the definitions allows our hypothetical
+forensics search engine to use the form which is easiest to execute or
+type-check. One could imagine, for example, a version of the byte-fetching
+definition that fetched bytes in chunks or one that did not construct all of
+the temporary structures (INodes, Superblocks, etc.), yet could convert into
+the definition described in this paper. Such a version would be faster to
+execute, but imply the same results.
+
+In general, our implementations for the relevant algorithms are not efficient.
+This leads to a great deal of duplicated effort by the proof-verifying
+type-checkers. Indeed, we currently require proofs by ran through Coq's {\tt
+vm\_compute} command, which is significantly optimized, for verification.
+Writing more efficient definitions will be crucial for industrial usage but
+could also prove more flexible (allowing the proof terms to be checked via
+{\tt coqchk}, for example.) As in all software, we first needed to show that
+our solutions {\em worked}; next we need to make them work well.
 
 This paper describes only a few of the types of evidence that would be
 required for a complete forensics tool. We used a single honeynet challenge to
@@ -1952,7 +1980,7 @@ disk image could restore a deleted file (as studied by Charles Winebrinner,)
 that deletion events imply the associated file is marked deleted, that files
 can exist which are not addressable, or any number of other proofs and lemmas.
 These would then make proofs about particular disk images even easier to
-apply.
+apply. 
 
 \acks
 First, I wish to thank my colleagues at DePaul, including Malik Aldubayan,
