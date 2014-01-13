@@ -1725,32 +1725,26 @@ Definition foundOn (event: Event) (disk: Disk) :=
 
 To verify that a Timeline is sound, we will defer to each consecutive pair of
 events. If each of these pairs is sound, we declare the entire Timeline to be
-as well. To aid our reflection proofs, we will match each event with its
-associated {\tt File}, creating the {\tt eventFiles} variable. Then, we will
-pair each of these with its neighbor such that we have a list of the first
-event paired with the second, the second with the third, and so forth.
+as well. The {\tt combine} operator ``zips'' two lists together, creating a
+list of pairs; the combined list is the length of the shorter input. We use
+that along with {\tt skipn} (which drops the requested number of elements from
+the head of a list) to pair each event such that the first event is paired
+with the second, the second with the third, and so forth.
 
 \begin{lstlisting}
 Definition isSound (timeline: Timeline) (disk: Disk) :=
-  exists (files: list File),
-    let eventFiles := combine timeline files in
-    let staggered := combine eventFiles (skipn 1 eventFiles) in
-    length files = length timeline
-    /\ forall (pair: (Event*File)*(Event*File)),
-        In pair staggered -> isSoundPair disk pair.
+  let staggeredEvents := combine timeline (skipn 1 timeline) in
+  forall (pair: Event*Event),
+    In pair staggeredEvents -> isSoundPair disk pair.
 \end{lstlisting}
 
 The final piece to defining a sound Timeline is to define {\tt isSoundPair},
 which simply needs to show that both events are found on disk and that the
-first is {\tt beforeOrConcurrent} with the second. Note that we throw away the
-matched {\tt File} structures; they are only useful to the associated
-reflection proof.
+first is {\tt beforeOrConcurrent} with the second. 
 
 \begin{lstlisting}
-Definition isSoundPair (disk: Disk) 
-  (pair: (Event*File)*(Event*File)) :=
-  let (lhsEvent, _) := fst pair in
-  let (rhsEvent, _) := snd pair in
+Definition isSoundPair (disk: Disk) (eventPair: Event*Event) :=
+  let (lhsEvent, rhsEvent) := eventPair in
   foundOn lhsEvent disk
   /\ foundOn rhsEvent disk
   /\ beforeOrConcurrent lhsEvent rhsEvent = true.
