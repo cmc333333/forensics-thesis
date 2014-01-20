@@ -55,8 +55,8 @@ keepspaces=true}
 \titlebanner{banner above paper title}        % These are ignored unless
 \preprintfooter{short description of paper}   % 'preprint' option specified.
 
-\title{Formalizing the Honeynet}
-\subtitle{An Investigation of the Computation of Forensics}
+\title{Feasible, Formal Forensics}
+\subtitle{Computational Proofs of a Honeynet Challenge}
 
 \authorinfo{CM Lubinski}
            {DePaul University}
@@ -115,39 +115,42 @@ rootkit was found. We will formalize some of the definitions and evidence
 provided by contestants in that competition.
 
 Our definitions, parsers, and evidence will be described/implemented in the
-proof-oriented language, Coq. While this language lives in the ML-family of
-programming languages, we will augment it with several functional and
-object-oriented notations. Using Coq allows us to formalize our proofs and
-definitions, but significantly restricts the practicality of our efforts; we
-will expand on these limitations throughout the paper. Despite these faults,
-Coq lets us build complete proof terms which serve as evidence that the disk
-image provided satisfies the researchers' definitions.
+proof-oriented application (and language), Coq. This tool allows us to
+formalize our proofs and definitions, but significantly restricts the
+practicality of our efforts; we will expand on these limitations throughout
+the paper. Despite these complications, Coq lets us build complete proof terms
+which serve as evidence that the disk image provided satisfies the
+researchers' definitions.
 
-We will show how the proof terms generated allow our solution to be {\em
-feasible} in the sense that they grow with the complexity of their sub-goals
-rather than with the size of a disk image, file, etc. Combining the specific
-evidence with documentation for the feasibility of this strategy should
-demonstrate the approach's potential as a core tool for forensics
-investigators. Along the way, we will include definitions of tar files,
-rootkit-like archives, file deletion (on the Ext2 file system,) as well as a
-timeline of events consistent with rootkit installation.
+We will argue that, due to their method of construction, the proof terms
+generated allow our solution to be {\em feasible} in the sense that the terms
+remain a constant size rather than growing with the disk image, file, etc. We
+also provide sample running times for verifying the proofs and describe their
+relation to the size of their input. Combining the specific evidence with
+documentation for the feasibility of this strategy should demonstrate the
+approach's potential as a core tool for forensics investigators. Along the
+way, we will include definitions of tar files, rootkit-like archives, file
+deletion (on the Ext2 file system,) as well as a timeline of events consistent
+with rootkit installation.
 
 We aim to show that this approach not only works (via the Honeynet examples)
-but is also scalable to the needs of forensics researchers.
+but may also be scalable to the needs of forensics researchers.
 
 \section{Getting Our Feet Wet with File Types}
 
 Let us start by considering a relatively straight-forward request: defining
 what it means for a given file to be a JPEG. How can we formalize this notion?
-One tact (used by many operating systems) is to rely on the file extension --
-in this case, checking for either {\tt jpg} or {\tt jpeg}. This is a very
+One tactic (used by many operating systems) is to rely on the file extension
+-- in this case, checking for either {\tt jpg} or {\tt jpeg}. This is a very
 loose definition, however, as malicious users need only give their files a
-different extension to avoid detection. We could instead review the JPEG spec
-and confirm that all of the meta data contained within a file is consistent
-with said spec. That approach runs the opposite end of the spectrum, requiring
-significantly more evidence. Further, the JPEG spec is not as tidy as one
-might hope; most applications are lenient with the file formats they accept
-and messy with the files they write.
+different extension to avoid detection. We could instead review the JPEG
+specification and confirm that all of the meta data contained within a file is
+consistent with said that document. That approach runs the opposite end of the
+spectrum, requiring significantly more evidence. Further, what is generally
+thought as a JPEG file is most likely implemented via either the  JFIF or Exif
+standards (or an amalgamation of the two)\cite{jpeg}. Most applications are
+lenient with the file formats they accept and messy with the files they
+write (see GIMP discussions on Exif\cite{gimp}).
 
 Instead, we will choose a middle route, opting to use ``magic numbers'' as our
 guide. This term refers to tell-tale byte values at predictable offsets within
@@ -156,7 +159,8 @@ relatively unique to various file formats, so we will use them in our
 definitions and add additional checks as necessary. JPEGs happen to always
 start with the bytes {\tt ff d8} and end with {\tt ff d9}. Similarly, gzipped
 files begin with {\tt 1f 8b 08} and Linux executables (ELFs) begin with {\tt
-7f 45 4c 46} ({\tt 7f} E L F.)
+7f 45 4c 46} ({\tt 7f} E L F.) See the wikipedia article\cite{wiki-magic} on
+magic numbers for more examples.
 
 Writing these definitions in Coq can be relatively straight forward. We need
 only compare the bytes found within a file (given the context of a specific
@@ -2015,6 +2019,10 @@ project for at least a few days.
 \bibitem{borland-honeynet}
   Borland, Matt. Submission to Honeynet.org \emph{Scan of the Month},
   05/05/2001. \url{http://old.honeynet.org/scans/scan15/som/som6.txt}
+\bibitem{gimp}
+  GNOME Bugzilla. {\em Add support for EXIF or TIFF/EP data (in JPEG, TIFF and
+  PNG formats}, 06/20/2001.
+  \url{https://bugzilla.gnome.org/show\_bug.cgi?id=56443}
 \bibitem{honeynet}
   The Honeynet Project. \url{http://www.honeynet.org/}
 \bibitem{honeynet-15}
@@ -2023,6 +2031,13 @@ project for at least a few days.
 \bibitem{lee}
   Lee, Jason. Submission to Honeynet.org \emph{Scan of the Month}, 05/25/2001.
   \url{http://old.honeynet.org/scans/scan15/som/som33.html}
+\bibitem{jpeg}
+  Library of Congress. JPEG Image Encoding. {\em Sustainability of Digital
+  Formats}.
+  \url{http://www.digitalpreservation.gov/formats/fdd/fdd000017.shtml}
+\bibitem{wiki-magic}
+  "Magic Numbers". {\em Wikipedia: The Free Encyclopedia}.
+  \url{http://en.wikipedia.org/wiki/Magic\_number\_\%28programming\%29#Examples}
 \bibitem{ocaml}
   Minsky, Yaron and Madhavapeddy, Anil and Hickey, Jason (2013) Chapter 3.
   Lists and Patterns; Options. {\em Real World OCaml}.
