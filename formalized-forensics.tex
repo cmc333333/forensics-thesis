@@ -503,6 +503,21 @@ Definition honeynet_image_a : Disk :=
   Disk_of_Map_N_Byte honeynet_map.
 \end{lstlisting}
 
+Using this method, we need only the sections of disk crucial to the file
+system's structure, resulting in an in-memory mapping which is a fraction of
+the size.
+
+\begin{center}
+  \begin{tabular}{|l|r|}
+    \hline
+    \multicolumn{2}{|c|}{Disk Size (Bytes)}\\
+    \hline
+    Size of Disk Image    & 271,401,984\\
+    Size of Relevant Map  & 2,404\\
+    \hline
+  \end{tabular}
+\end{center}
+
 \subsection{The Fetch Type and Populating Disk Images}
 \label{subsec:fetch}
 
@@ -575,6 +590,18 @@ then run {\tt gunzip} on the resulting {\tt tgz} file, and then pulled the
 relevant bytes (i.e. those necessary for the tar file header, see Section
 \ref{sec:tar}) into a {\tt FMapAVL}. The latter step could be automated using
 {\tt Fetch} as described in the previous section.
+
+\begin{center}
+  \begin{tabular}{|l|r|}
+    \hline
+    \multicolumn{2}{|c|}{File Size (Bytes)}\\
+    \hline
+    Inode 23            &   520,333\\
+    Gunzipped Inode 23  & 1,454,080\\
+    {\tt gunzipped\_23} &       580\\
+    \hline
+  \end{tabular}
+\end{center}
 
 The resulting map is wrapped in a {\tt ByteData} and then a {\tt File} with a
 ``Mock'' file system. As mentioned when discussing {\tt fetchByte}, this
@@ -1618,6 +1645,37 @@ Definition recFileNameFrom (nextCall: N -> list string)
     end.
 \end{lstlisting}
 
+With these functions, we can retrieve a list of the file names (as strings)
+contained within a tar file. Though the functions may seem a bit complicated,
+their usage is straight-forward and relatively efficient. We now provide the
+running times for the {\tt parseFileNames} function on various sizes of Tar
+headers. The times provided were generated on a Linux netbook; to see how the
+tests were performed, see the {\tt tar\_runtimes.v} file in the associated
+repository.
+
+\begin{center}
+  \begin{tabular}{|l|r|}
+    \hline
+    \multicolumn{2}{|c|}{parseFileNames Running Times}\\
+    \hline
+    Number of Headers & Running Time (seconds)\\
+    \hline
+    1 & 0.03448\\
+    5 & 0.06558\\
+    10 & 0.10617\\
+    50 & 0.56047\\
+    100 & 1.231836\\
+    500 & 7.897615\\
+    1000 & 17.58687\\
+    5000 & 111.31558\\
+    \hline
+  \end{tabular}
+\end{center}
+
+Clearly this is not as fast (and scales more poorly) than the {\tt tar}
+utility, but this performance should also be acceptable for most archive
+files.
+
 \subsection{Computing Over File Names}
 
 We also need to define the {\tt trimFileNamePrefix} function, which we want to
@@ -1913,6 +1971,44 @@ tool, {\tt coqchk}. Most likely due to our use of {\tt vm\_compute}, a faster
 computation engine within Coq, we can prove properties with Coq that we cannot
 verify with {\tt coqchk}. Further research is required to verify this
 hypothesis and to develop a work-around if needed.
+
+The size of the proof term is one important metric for tractability, but let
+us not forget execution time. On our relatively small examples (with a disk
+image containing only a couple of thousand bytes), execution time is
+reasonable when both proving a lemma (via compute) and verifying it (via Qed).
+Further, adding non-relevant bytes to the disk image appears to have little
+effect on type-checking (i.e. verifying the proof). While adding extra bytes
+does not appear to affect the computation steps in the Borland proof, it does
+appear to have negative consequences to the Lee lemma. Of course, the more we
+are trying to prove, the longer we can expect our computations to run.
+
+\begin{center}
+  \begin{tabular}{|l|c|c|}
+    \hline
+    \multicolumn{3}{|c|}{Malicious Archive Running Times (seconds)}\\
+    \hline
+    Extra Bytes & Compute & Qed\\
+    \hline
+    0 & 4.63443 & 3.95731\\
+  100 & 4.62438 & 3.92747\\
+  1,000 & 4.64941 & 3.99868\\
+ 10,000 & 4.71911 & 3.96669\\
+100,000 & 4.62513 & 4.49423\\
+    \hline
+    \multicolumn{3}{c}{}\\
+    \hline
+    \multicolumn{3}{|c|}{Timeline Running Times (seconds)}\\
+    \hline
+    Extra Bytes & Compute & Qed\\
+    \hline
+    0 & 1.54867 & 0.55369\\
+  100 & 1.55799 & 0.56295\\
+  1,000 & 1.78786 & 0.58348\\
+ 10,000 & 4.33128 & 0.66116\\
+100,000 & 39.46831 & 0.78889\\
+    \hline
+  \end{tabular}
+\end{center}
 
 Tractability of the proof term is important for verification, but proof by
 reflection also allows the proof generation of particular lemmas using Coq's
