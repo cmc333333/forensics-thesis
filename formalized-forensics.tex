@@ -505,7 +505,7 @@ Definition honeynet_image_a : Disk :=
 
 Using this method, we need only the sections of disk crucial to the file
 system's structure, resulting in an in-memory mapping which is a fraction of
-the size.
+the size of the original disk.
 
 \begin{center}
   \begin{tabular}{|l|r|}
@@ -1975,12 +1975,14 @@ hypothesis and to develop a work-around if needed.
 The size of the proof term is one important metric for tractability, but let
 us not forget execution time. On our relatively small examples (with a disk
 image containing only a couple of thousand bytes), execution time is
-reasonable when both proving a lemma (via compute) and verifying it (via Qed).
-Further, adding non-relevant bytes to the disk image appears to have little
-effect on type-checking (i.e. verifying the proof). While adding extra bytes
-does not appear to affect the computation steps in the Borland proof, it does
-appear to have negative consequences to the Lee lemma. Of course, the more we
-are trying to prove, the longer we can expect our computations to run.
+reasonable when both proving the honeynet lemmas (via compute) and verifying
+them (via Qed). Further, adding non-relevant bytes to the disk image appears
+to have little effect on type-checking (i.e. verifying the proof). While
+adding extra bytes does not heavily influence the computation steps in the
+proof of root kit installation, it does appear to have negative consequences
+to the timeline verification proof. Of course, the more we are trying to
+prove, the more we will need to compute, and the longer we can expect our
+computations to run.
 
 \begin{center}
   \begin{tabular}{|l|c|c|}
