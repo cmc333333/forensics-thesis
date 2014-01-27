@@ -68,7 +68,7 @@ keepspaces=true}
 Formal definitions of multiple file formats, ``rootkit-like'' tar files, and
 event timelines are provided in the proof-oriented language, Coq. These are
 combined to mimic the types of evidence given by independent forensics
-researchers in a forensics competition (``Honeynet''.) Using said definitions,
+researchers in a forensics competition (``Honeynet''). Using said definitions,
 the evidence is proven to be consistent with the disk image provided for the
 relevant competition through the proof-by-reflection technique. The
 applicability of this approach is also theorized, in addition to the role it
@@ -105,22 +105,28 @@ described by several independent researchers studying a ``Honeynet''
 challenge. The Honeynet Project\cite{honeynet}'s now-defunct {\it Scan of the
 Month} series provided researchers a disk image attained from a compromised
 honeypot (a computer created with the explicit goal of catching malware for
-inspection.) Each month, participants were challenged to describe what
+inspection). Each month, participants were challenged to describe what
 happened to the system and provide evidence for their conclusions. We will
 consider one specific contest\cite{honeynet-15}, in which a rootkit
 (replacement system programs that hide malicious activity) was installed on a
 server. The security community was asked to recover the rootkit, prove that it
 had been installed, and provide a step-by-step writeup detailing how the
-rootkit was found. We will formalize some of the definitions and evidence
-provided by contestants in that competition.
+rootkit was found.
 
-Our definitions, parsers, and evidence will be described/implemented in the
-proof-oriented application (and language), Coq. This tool allows us to
-formalize our proofs and definitions, but significantly restricts the
-practicality of our efforts; we will expand on these limitations throughout
-the paper. Despite these complications, Coq lets us build complete proof terms
-which serve as evidence that the disk image provided satisfies the
-researchers' definitions.
+The data provided by these contestants needs to be independently verified,
+preferably automatically, via a separate tool chain. Taking the entrants'
+claims at face value is not an acceptable solution, but neither is using their
+forensics programs, as the programs' findings must {\it also} be verified. We
+will instead formalize some of the definitions and types of evidence provided
+by the researchers and create independently verifiable {\it proofs} that the
+disk image given satisfies the claims made.
+
+Our definitions, parsers, and evidence will be described in the proof-oriented
+application (and language), Coq. This tool allows us to formalize our efforts,
+but significantly restricts their practicality; we will expand on these
+limitations throughout the paper. Despite these complications, Coq lets us
+build complete proof terms which serve as the final, verifiable proof that
+the researchers' assertions were accurate.
 
 We will argue that, due to their method of construction, the proof terms
 generated allow our solution to be {\em feasible} in the sense that the terms
@@ -159,7 +165,7 @@ relatively unique to various file formats, so we will use them in our
 definitions and add additional checks as necessary. JPEGs happen to always
 start with the bytes {\tt ff d8} and end with {\tt ff d9}. Similarly, gzipped
 files begin with {\tt 1f 8b 08} and Linux executables (ELFs) begin with {\tt
-7f 45 4c 46} ({\tt 7f} E L F.) See the wikipedia article\cite{wiki-magic} on
+7f 45 4c 46} ({\tt 7f} E L F). See the wikipedia article\cite{wiki-magic} on
 magic numbers for more examples.
 
 Writing these definitions in Coq can be relatively straight forward. We need
@@ -215,7 +221,7 @@ compromised system''. We formalize this definition by saying that a rootkit
 installation must satisfy the following definition:
 
 \begin{lstlisting}
-Definition borland_rootkit (disk: Disk) (gunzip: File->File) :=
+Definition borland_rootkit (disk: Disk) :=
   exists file: File,
     isOnDisk file disk
     /\ isDeleted file
@@ -228,7 +234,7 @@ deleted, gzipped file on the Honeynet disk image such that, when we unzip that
 file, the contained tar looks like a rootkit. If such a file exists, the
 Borland definition is satisfied, and we presume a rootkit has been installed.
 For the remainder of this section, we dive deeper into each of the definitions
-in the ``and'' clause (save {\tt isGzip}, which we have previously described.)
+in the ``and'' clause (save {\tt isGzip}, which we have previously described).
 Section \ref{sec:sufficient} will investigate whether or not Borland's
 definition is sufficient to describe a rootkit installation.
 
@@ -238,13 +244,14 @@ Each file system, such as Ext2, FAT32, and NTFS, represent ``files''
 differently, yet there are several universal (and somewhat-universal)
 properties shared across these systems. We use these shared properties to
 describe a generic, abstract file structure which can be used in proofs
-without worrying about the underlying file system. Many properties of files
-(such as file type, as described above) should not depend on file system
-traits.
+without worrying about the underlying file system. This abstraction is common
+in forensics tools (e.g. the Digital Forensics Framework\cite{dff} and the
+Sleuth Kit\cite{sleuth-kit}) because many properties of files (such as file
+type, as described above) should not depend on file system traits.
 
 What might these ``universal'' attributes of a file be? File size (in bytes)
 seems appropriate, as does deletion status (on most file systems, ``deleted''
-files have a tendency to remain present on disk.) We also need a file
+files have a tendency to remain present on disk). We also need a file
 identifier (which will be file system dependent) to distinguish this file from
 others on disk. Finally, we have four common-but-not-universal fields -
 access, modification, creation, and deletion times. These Unix-style
@@ -267,17 +274,18 @@ Structure File := mkFile {
 
 The {\tt FileId} type may take multiple forms; for the purposes of our
 exploration, we care only about Ext2 file systems, files embedded in a
-tar-archive, and files which we define from thin-air (see ``assumptions'' as
-defined in Section \ref{sec:proving}.) The former needs an Inode Index to
-serve as an identifier; the second needs the parent archive's file identifier
-as well as an offset within the archive; the final will make use of a {\tt
-ByteData} structure (i.e. the file data) to identify itself.
+tar-archive, and files which are not tied to the disk image (see
+``assumptions'' as defined in Section \ref{sec:proving}). The first needs an
+Inode Index to serve as an identifier; the second needs the parent archive's
+file identifier as well as an offset within the archive; the final will make
+use of a (potentially partial) list of file data, {\tt list (N*Byte)}, to
+identify itself.
 
 \begin{lstlisting}
 Inductive FileId: Type :=
   | Ext2Id: N -> FileId
   | TarId: FileId -> N -> FileId
-  | MockId: ByteData -> FileId
+  | MockId: list (N*Byte) -> FileId
 .
 \end{lstlisting}
 
@@ -287,24 +295,25 @@ function, {\tt fetchByte}. This function uses the provided disk and file
 identifier to retrieve a requested byte, decoupling the file data from the
 {\tt File} structure. For Ext2, this means delegating to the appropriate Ext2
 function (described in Section \ref{sec:ext2}); for the so-called ``Mock''
-file system, it means delegating to the contained {\tt ByteData}; Tar file
-processing will be explained in Section \ref{sec:tar}.
+file system, it means searching through the contained list of offsets; Tar
+file processing will be explained in Section \ref{sec:tar}.
 
 \begin{lstlisting}
 Fixpoint fetchByte (fileId: FileId) (disk: Disk)
   : N->@Fetch Byte := 
   match fileId with
   | Ext2Id inodeIndex => Ext2.fileByte disk inodeIndex
-  | MockId data => data
+  | MockId data => findInPairList data
   | TarId fs shiftAmt => fetchByte fs (shift disk shiftAmt)
   end.
 \end{lstlisting}
 
-In earlier work, {\tt File}s carried around a closure containing the relevant
-file system data. While this was more elegant, printing and constructing
-{\tt File}s proved to be too unmanageable. We have instead settled on a simple
-structure which is not directly tied to a disk image. To make the association
-between images and files, we must require the {\tt isOnDisk} property.
+In an earlier prototype, {\tt File}s carried around a closure containing the
+relevant file system data. While this was more elegant, printing and
+constructing {\tt File}s proved to be too unmanageable. We have instead
+settled on a simple structure which is not directly tied to a disk image. To
+make the association between images and files, we must require the {\tt
+isOnDisk} property.
 
 \subsection{isOnDisk}
 
@@ -326,17 +335,16 @@ often fragmented across multiple, disjoint segments of a disk. Moreover, this
 definition has high potential for false positives, where a ``file'' is formed
 by looking at the bits that span a fragment boundary but are not part of the
 same (logical) byte sequence. Files are stored on disks via file systems,
-which make no sequential guarantees (particularly in recent file systems such
-as ZFS and Btrfs.) On spinning hard drives, the need to ``defragment'' arises
-from the segmentation of files over non-adjacent sectors on disk; moving the
-fragments to be adjacent improves read performance by reducing the times the
-drive head must skip around.
+which make no sequential guarantees. Indeed, on spinning hard drives, the need
+to ``defragment'' arises from the segmentation of files over non-adjacent
+sectors on disk; moving the fragments to be adjacent improves read performance
+by reducing the times the drive head must skip around.
 
 As sequential access will not do, we must build our definition for file
 existence with file systems in mind. Proving that a file exists within each
-type of file system is a relatively unique operation, however, so we will
-perform case analysis. While this research focuses on Ext2, we provide the
-skeleton for other file systems below.
+type of file system is entirely dependent on the file system in question,
+however, so we will perform case analysis. While this research focuses on
+Ext2, we provide the skeleton for other file systems below.
 
 \begin{lstlisting}
 Definition isOnDisk (file: File) (disk: Disk):
@@ -355,7 +363,7 @@ Definition isOnDisk (file: File) (disk: Disk):
 
 The functions {\tt findAndParseFile} perform the work of inspecting the disk
 image, reading the relevant data structures, and creating an abstract
-representation of the results (in this case, a {\tt File}.) {\tt Found}
+representation of the results (in this case, a {\tt File}). {\tt Found}
 implies that there were no errors while trying to retrieve the file; see
 Section \ref{subsec:fetch}'s discussion of the {\tt Fetch} construction for
 more.
@@ -373,14 +381,15 @@ Definition isDeleted (file: File) :=
 
 \subsection{Gunzip, an External Function}
 
-Before we can describe {\tt Tar.looksLikeRootkit}, we should note its first
-parameter {\tt (gunzip file)}. {\tt gunzip}, a parameter to the {\tt
-borland\_rootkit} definition, represents the unzipping/deflating operation for
-gzip-files. As implementing the decompression algorithm within Coq would not
-be particularly useful to our study, we instead relegate its operation to a
-parameter in the definition. As we will see in Section \ref{subsec:gunzip},
-this parameter appears at to the outer-most level of the proof; we will
-effectively run the function via an external program in a preprocessing step.
+Before we can describe {\tt Tar.looksLikeRootkit}, we should note the
+appearance of an as-yet-undefined {\tt gunzip} function. This function
+represents the unzipping/deflating operation for gzip-files. As implementing
+the decompression algorithm within Coq would not be particularly useful to our
+study, we instead leave its definition open using Coq's {\tt Variable}
+command. The definition will not be defined anywhere within our
+programs/evidence and will appear as a hypothesis in the outer-most level of
+the proof. We will leave confirmation to an external, non-Coq verifier, as
+discussed in Section \ref{subsec:gunzip}.
 
 \subsection{Tars That Look Like Rootkits}
 
@@ -448,34 +457,37 @@ will use Coq's tactic language to build a proof term to serve as evidence.
 
 \begin{lstlisting}
 Lemma borland_honeynet_file:
-  borland_rootkit honeynet_image_a gunzip_a.
+  (gunzip file23) = gunzipped_partial
+    -> borland_rootkit honeynet_image_partial.
   Proof.
     apply borland_reflection 
-      with (file := file23) 
+      with (file := file23) (gunzipped := gunzipped_partial)
            (filename1 := maliciousFileName1) 
            (filename2 := maliciousFileName2).
     vm_compute. reflexivity.
 Qed.
 \end{lstlisting}
 
-This very simple proof clearly hides a great deal of complexity. What are {\tt
-honeynet\_image\_a} and {\tt gunzip\_a}? How does {\tt borland\_reflection}
-work? Where did {\tt file23} and the \\{\tt maliciousFileName}s come from?
-While we will answer each of these questions in detail, it is important to
-recognize that writing the individual proof is very straight forward (and
-could easily be automated). This plays a heavy role in the future of this type
-of research, as discussed in section \ref{sec:future}. Further, the proof term
-itself is quite small, the importance of which will be covered in section
+This very simple proof clearly hides a great deal of complexity. Why is there
+a hypothesis about {\tt gunzip}? What are {\tt honeynet\_image\_partial} and
+{\tt gunzipped\_partial}? How does {\tt borland\_reflection} work? Where did
+{\tt file23} and the \\{\tt maliciousFileName}s come from?  While we will
+answer each of these questions in detail, it is important to recognize that
+writing the individual proof is very straight forward (and could easily be
+automated).  This plays a heavy role in the future of this type of research,
+as discussed in section \ref{sec:future}. Further, the proof term itself is
+quite small, the importance of which will be covered in section
 \ref{subsec:reflection}.
 
 \subsection{Disk Images}
 
-{\tt honeynet\_image\_a} has the type, {\tt Disk}, which is used to represent
-a random-access disk throughout our definitions and proofs.  Technically, it
-is function from {\tt N} to {\tt Fetch Byte}, acting as a byte-retrieval
-mechanism; give a {\tt Disk} an offset, and it will respond with the byte
-value at the offset requested or an error code. The {\tt ByteData} type is
-simply an alias of {\tt Disk}, but provides a more semantic name.
+{\tt honeynet\_image\_partial} has the type, {\tt Disk}, which is used to
+represent a random-access disk throughout our definitions and proofs.
+Technically, it is function from {\tt N} to {\tt Fetch Byte}, acting as a
+byte-retrieval mechanism; give a {\tt Disk} an offset, and it will respond
+with the byte value at the offset requested or an error code. The {\tt
+ByteData} type is simply an alias of {\tt Disk}, but provides a more semantic
+name.
 
 Generally, disk data is backed by an in-memory mapping via Coq's {\tt FMapAVL}
 tree, and must be generated from the true disk values. Due to Coq's
@@ -483,7 +495,7 @@ limitations on data structure sizes, we only populate these maps with
 essential values; once the map reaches a few thousand entries, it will no
 longer be usable within Coq. We leave a full accounting of the disk bytes to
 our code (see the comments in {\tt example\_images.v} for an explanation of
-why each byte range is included.) Note: {\tt find} is an operation to reach
+why each byte range is included). Note: {\tt find} is an operation to reach
 into a {\tt FMapAVL}.
 
 \begin{lstlisting}
@@ -499,13 +511,13 @@ Definition honeynet_map :=
 Definition Disk_of_Map_N_Byte (map: Map_N_Byte) : Disk :=
   fun (key: Z) => find key map.
 
-Definition honeynet_image_a : Disk := 
+Definition honeynet_image_partial : Disk := 
   Disk_of_Map_N_Byte honeynet_map.
 \end{lstlisting}
 
 Using this method, we need only the sections of disk crucial to the file
 system's structure, resulting in an in-memory mapping which is a fraction of
-the size of the original disk.
+the size of the original disk (hence the suffix, {\tt \_partial}).
 
 \begin{center}
   \begin{tabular}{|l|r|}
@@ -556,7 +568,7 @@ image, feed it an empty {\tt Disk}, see where ({\tt MissingAt}) the function
 failed, retrieve that byte from disk, add it to the {\tt Disk} structure, and
 repeat until the function was successful.
 
-\subsection{Assumptions and Gunzipping}
+\subsection{The Gunzip Hypothesis}
 \label{subsec:gunzip}
 
 As we just saw, Coq's proof-oriented nature has left the language with several
@@ -564,32 +576,31 @@ limitations that need to be worked around in our implementation. Coq programs
 cannot, for example, read bytes from a disk image; they cannot (for our
 intents) call external programs to transform data; they cannot even
 instantiate a list of tens of thousands of values in memory. We work around
-these limitations by making {\bf assumptions} about our environment (with the
-suffix {\tt \_a}) which entail only the relevant pieces of data needed for our
+these limitations in part by using only subsets of the disk image and file
+structures which entail only the relevant pieces of data needed for our
 proofs. As discussed above, we will not read a full disk image; instead, we
 will generate a {\it sparse} map to represent that disk, including only the
 offsets of interest.
 
-Assumptions are also used to account for transformations that would normally
-be performed by a trusted, external program. We cannot, for instance, run
-``gunzip'', nor do we want to try to implement that algorithm within Coq.
-Instead, we require an assumption be made that encompasses that activity. Our
-proofs cannot validate that {\tt honeynet\_disk\_a} or {\tt gunzip\_a}
-accurately represent values on the disk or an unzipping function -- they
-instead trust those assumptions to be accurate and rely on users (or programs;
-see Section \ref{sec:future}) for verification.
+We also use hypotheses to account for a transformations that would normally
+be performed by a trusted, external program. We cannot run ``gunzip'', nor do
+we want to try to implement that algorithm within Coq. Instead, we describe an
+undefined implementation to encompass that activity. Our proofs cannot
+validate that the unzipping operation was successful within Coq; their
+statements must instead carry the caveat that the data provided in {\tt
+gunzipped\_partial} is accurate. It is up to the users (or programs; see
+Section \ref{sec:future}) to verify these hypotheses.
 
-The {\tt gunzip\_a} assumption represents gzip's unzipping/deflating
-operation, converting a compressed, gzip file into the corresponding,
-uncompressed archive file. As we want to avoid implementing this function in
-its entirety, we will instead provide a function which throws away its input
-{\tt File} and returns a constant {\tt File} which has been pre-populated with
-the relevant bytes. We generate the data needed for this file by using the
-{\it Sleuth Kit}'s {\tt icat} program to pull inode {\tt 23}'s contents. We
-then run {\tt gunzip} on the resulting {\tt tgz} file, and then pulled the
-relevant bytes (i.e. those necessary for the tar file header, see Section
-\ref{sec:tar}) into a {\tt FMapAVL}. The latter step could be automated using
-{\tt Fetch} as described in the previous section.
+This said, we want to verify as much as possible in our implementation, so we
+will provide data from the real, unzipped file via the {\tt
+gunzipped\_partial} structure. This is a constant {\tt File} which has been
+pre-populated with the relevant bytes using the ``Mock'' file identifier. We
+generated the data needed for this file by using the {\it Sleuth Kit}'s {\tt
+icat} program to pull inode {\tt 23}'s contents. We then ran {\tt gunzip} on
+the resulting {\tt tgz} file, and pulled the relevant bytes (i.e. those
+necessary for the tar headers, see Section \ref{sec:tar}) into the {\tt File}.
+The latter step could be automated using {\tt Fetch} as described in the
+previous section.
 
 \begin{center}
   \begin{tabular}{|l|r|}
@@ -603,12 +614,6 @@ relevant bytes (i.e. those necessary for the tar file header, see Section
   \end{tabular}
 \end{center}
 
-The resulting map is wrapped in a {\tt ByteData} and then a {\tt File} with a
-``Mock'' file system. As mentioned when discussing {\tt fetchByte}, this
-causes byte retrieval operations to defer to the {\tt ByteData}, so we have
-generated a new {\tt File} from ``thin-air,'' though we know it to be verified
-by the {\tt gunzip} program.
-
 \begin{lstlisting}
 Definition gunzipped_23 : Map_N_Byte := 
 [ 
@@ -618,20 +623,13 @@ Definition gunzipped_23 : Map_N_Byte :=
   ...
 ].
 
-Definition gunzip_a := (fun (input: File) => 
-  let asDisk := Disk_of_Map_N_Byte gunzipped_23 in
-  (mkFile (FileIds.MockId asDisk)
-          1454080 (* uncompressed file size *)
-          input.(deleted) 
-          (* Fields not used; ignore them *)
-          None None None None)).
+Definition gunzipped_partial : File := mkFile
+  (FileIds.MockId (MN.elements gunzipped_23))
+  1454080 (* uncompressed file size *)
+  true
+  (* Fields not used; ignore them *)
+  None None None None.
 \end{lstlisting}
-
-We pause now to emphasize that, from Coq's perspective, there is no
-relationship between the constructed disk image and {\tt gunzipped\_23}. We
-trust the proof results because we know the {\em lineage} of the data used to
-create {\tt gunzipped\_23}. Encapsulating that lineage programmatically is an
-area of future research, discussed in Section \ref{sec:future}.
 
 \subsection{Proof By Reflection}
 \label{subsec:reflection}
@@ -747,7 +745,7 @@ really matter what the file names are; the definition only requires {\em that}
 they are. How can this be converted into a computational version? If we were
 proving that certain file names satisfied such a definition, we would
 generally provide the names as existential proof (via the {\tt exists}
-tactic.) We will need to do the same for the boolean function, providing the
+tactic). We will need to do the same for the boolean function, providing the
 file names as parameters.
 
 \begin{lstlisting}
@@ -772,7 +770,7 @@ Lemma looksLikeRootkit_reflection (file: File) (disk: Disk)
 \end{lstlisting}
 
 When we apply {\tt looksLikeRootkit\_reflection}, we will provide the two file
-names as parameters (instead of providing them to the {\tt exists} tactic.)
+names as parameters (instead of providing them to the {\tt exists} tactic).
 Where do these existential values come from? For our examples, we simply
 instantiated the file name strings and file structures directly, but the
 longer-term strategy is to compute them from the assumptions. These computed
@@ -809,7 +807,7 @@ that functions which produce them can be chained such that {\em any} error in
 a component causes the entire computation to result in that error. To get to
 this point, we define two functions, indicated by the infix notation {\tt
 \_fmap\_} and {\tt \_fflatmap\_} (the prepending `f' indicates that the {\tt
-Fetch} type is used rather than Coq's built-in {\tt Exc}.) The function
+Fetch} type is used rather than Coq's built-in {\tt Exc}). The function
 signatures for each should aid their explanation.
 
 \begin{lstlisting}
@@ -838,7 +836,7 @@ removing the outer {\tt Found}. These functions allow sequences like:
 \end{lstlisting}
 
 which can return an {\tt ErrorString}; a {\tt MissingAt} with 0, 1, or 2; or
-{\tt Found (Byte, Byte, Byte)} (all three bytes present.) If the first byte
+{\tt Found (Byte, Byte, Byte)} (all three bytes present). If the first byte
 was not present, the outer-most {\tt \_fflatmap\_} would not have executed the
 inner function. Similarly, if the second byte were not present, the function
 including {\tt \_fmap\_} would not be ran, and if the third byte were
@@ -867,9 +865,9 @@ unique file identifier for the Ext2 file system).
 To understand what these structures represent, let us discuss Ext2, as
 described by one of its original authors, David Poirier\cite{non-gnu}. At its
 core, the file system is composed of a sequence of equally-sized chunks of
-bytes (called ``blocks''.) Files are not necessarily stored on contiguous (or
+bytes (called ``blocks''). Files are not necessarily stored on contiguous (or
 even in-order) blocks; their data may be parcelled throughout the disk image
-(as we will describe when discussing Inodes, below.) Each file is referenced
+(as we will describe when discussing Inodes, below). Each file is referenced
 by a single ``Inode'' structure, which keeps track of the file's data
 locations as well as access times, file size, and other meta data. 
 
@@ -878,9 +876,9 @@ Descriptor''. This descriptor includes collective information about Inodes
 (such as which are allocated,) as well as provides a mechanism to segment the
 administration of Inodes. We can easily compute to which group a particular
 Inode index belongs by dividing it by the number of inodes per group (a
-file-system-wide setting found in the SuperBlock.) We can also compute the
+file-system-wide setting found in the SuperBlock). We can also compute the
 Inode's position within that group by taking the remainder of this division
-(i.e. by applying mod.) Here, we should note that for both of these
+(i.e. by applying mod). Here, we should note that for both of these
 operations, Inode indices are one-indexed; this will lead to some additions
 and subtractions by one throughout our code to convert between zero- (with
 which it is easier to compute) and one-based indices.
@@ -934,10 +932,10 @@ parseDeleted}.
 Regardless of block size, the first SuperBlock can be found starting at the
 1024th byte. Below this position is the boot sector, executable code that
 loads prior to the main operating system (think boot loaders like LILO, GRUB,
-and MBR.) While the size of the SuperBlock depends on the revision of Ext, the
+and MBR). While the size of the SuperBlock depends on the revision of Ext, the
 format is largely compatible, so we will use the SuperBlock structure
 described by Poirier. This specification cares only about the first 264 or so
-bytes of the block (regardless of its full size.)
+bytes of the block (regardless of its full size).
 
 Finding and parsing the SuperBlock, then, amounts to jumping to offset 1024 on
 the disk and placing the read values into a SuperBlock structure. To make this
@@ -982,7 +980,7 @@ Definition findAndParseSuperBlock (disk: Disk)
 
 While we parse out virtually all of the fields of a SuperBlock, we will need
 only a handful. {\tt inodesCount} provides an upper bound for inode indices
-(which we use to validate that a given inode exists.) {\tt inodesPerGroup}
+(which we use to validate that a given inode exists). {\tt inodesPerGroup}
 will appear several times in this paper; the field indicates the number of
 inodes assigned to each GroupDescriptor. That field therefore provides a way
 to determine which GroupDescriptor is needed for a particular inode index. The
@@ -1128,7 +1126,7 @@ Definition findAndParseInode (disk: Disk)
 
 This code sample highlights the twelve ``direct block'' pointers and three
 indirection pointers, which we combine into a list, making the {\tt block}
-field (keeping with Poirier's conventions.) Ext2 was designed with a trade-off
+field (keeping with Poirier's conventions). Ext2 was designed with a trade-off
 in mind; quick access to file data generally runs counter to the desire to
 store very large files.  The solution the file system employs is to allow the
 first twelve data blocks to be directly addressable from the Inode. Slightly
@@ -1256,7 +1254,7 @@ reduces the block number requested accordingly, and recursively tries again.
 To select the correct block address to recursively follow, we must determine
 how many blocks each indirection pointer is responsible for ({\tt
 unitSizeInBlocks},) and select the index of the block address within the array
-accordingly ({\tt nextBlockIndex}.) Using that, and the fact that each address
+accordingly ({\tt nextBlockIndex}). Using that, and the fact that each address
 is four bytes large, we jump to the correct offset within the pointer array,
 read those four bytes, and recurse.
 
@@ -1523,7 +1521,7 @@ Compute (fold_left (fun (acc: list N) (next: N) =>
 
 Retrieving the file name requires reading the first hundred bytes of the
 header and taking every character until the string is terminated (via a null
-character.) As each attempt to read from the file could fail, and we would
+character). As each attempt to read from the file could fail, and we would
 like that failure to ``percolate up,'' we will use {\tt fold\_left} to both
 propagate failures and collect bytes. The function we provide to it will
 accumulate via a {\tt Fetch (list Byte)}; should anything go wrong, the {\tt
@@ -1680,7 +1678,7 @@ files.
 
 We also need to define the {\tt trimFileNamePrefix} function, which we want to
 return the string after the last directory delimiter (i.e. after the last `/'
-or '$\backslash$'.) To do this, we use our {\tt takeWhile} function applied
+or '$\backslash$'). To do this, we use our {\tt takeWhile} function applied
 to the reverse of the file name provided, taking bytes until we hit either `/'
 or `$\backslash$'. We then reverse that result to get the final, trimmed file
 name.
@@ -1718,7 +1716,7 @@ The {\tt Event} type currently consists of four forms, representing four
 file-related events: access, creation, modification, and deletion. We will
 represent these events with two parameters, a Unix-style timestamp of the
 event's execution and a file system identifier (as would be found in a {\tt
-File}.)
+File}).
 
 \begin{lstlisting}
 Inductive Event: Type :=
@@ -1823,7 +1821,7 @@ into the Honeynet contest described before. As part of his evidence, he
 provided a sequenced list of inode events (as discovered by ``MACtimes'') and
 annotated their significance. We copy several of these events and their
 annotations into Coq; in the conversion we lose file name (instead, we use
-inode number) and pretty-printed dates (opting for Unix timestamps.)
+inode number) and pretty-printed dates (opting for Unix timestamps).
 
 \begin{lstlisting}
 Definition lee_timeline :=
@@ -1858,7 +1856,7 @@ Definition lee_timeline :=
   :: nil.
 
 Lemma lee_honeynet_file:
-  Timeline.isSound lee_timeline honeynet_image_a.
+  Timeline.isSound lee_timeline honeynet_image_partial.
 \end{lstlisting}
 
 As with {\tt borland\_rootkit}, proving this lemma is as simply as applying a
@@ -1885,12 +1883,12 @@ much of a stretch; we would simply need to extend our Ext2 definitions to
 retrieve file names in addition to file structures.
 
 With this assumption, are there scenarios where our definitions could be
-satisfied without a rootkit being installed? Let's start by ruling out
+satisfied without a rootkit being installed? Let us start by ruling out
 possibilities. While downloading and installing non-system software satisfies
 many of the requirements (perhaps a gzipped-tar that is deleted after
 replacing some files,) we can rule this scenario out based on the name of the
 files replaced (i.e. non-system software installation would not affect system
-utilities.) What about an update to a system program? Here we can rely on the
+utilities). What about an update to a system program? Here we can rely on the
 clause within our ``malicious-looking'' check which requires {\em multiple}
 system file names.
 
@@ -1900,7 +1898,7 @@ argue that practical package managers would not include the changes in a
 single archive, but that argument is not as strong as we desire. It is
 conceivable that a hotfix to a predictable operating system, say OS X, might
 come as a single, gzipped tar archive which replaces multiple system files. By
-all accounts, this would trigger our definition, even though a rootkit had
+all accounts, this would satisfy our definition, even though a rootkit had
 not actually been installed.
 
 Here, the leap between our definition and its semantics causes us pain --
@@ -1908,26 +1906,27 @@ scenarios like the one described {\em look} like rootkit installation. System
 files are replaced by those found within an archive which was deleted shortly
 after installation. We might try to eliminate these false positives by
 checking for code signatures or describing rootkit files by tell-tale
-fingerprints, either within the executable's bytes or within its actions. That
-said, making this exception would simply move the goal post further down the
-field; we could surely find a legitimate counter-example even with the
-additional restrictions. Modern anti-virus software, with its constantly
-evolving signatures, does not manage the distinction particularly well; we do
-not expect our research to perform any better.
+fingerprints, either within the executable's bytes or within its actions.
+Unfortunately, as anti-virus software vendors have found, constantly evolving
+signatures are quite difficult to maintain. This strategy is not sustainable
+in the long term and certainly falls outside of the scope of this research.
 
-Indeed, we will never be able to completely remove counter-examples as given
-enough iterations, a random number generator would eventually create a disk
-that provides {\em exactly} the data that would indicate a root kit
-installation. Clearly, no such software would be installed, yet any definition
-we could conceive could be satisfied. Ultimately, the definitions cannot
-guarantee their semantic meaning; in aggregate the definitions can only make
-such meaning more and more likely.
+Indeed, any definition for root kit installation which relies solely on the
+disk image could be satisfied given a random number generator and enough
+iterations or direct write access. In either case, the {\em exact} data that
+would indicate a root kit installation could be present on disk. Clearly, no
+such software would have been installed, yet our definitions would be
+satisfied. Ultimately, the definitions we provide cannot guarantee their
+semantic meaning. It is up to the forensics community to determine how much
+evidence qualifies an ``enough''.
 
 This, too, is the methodology found within the Honeynet competition; as there
-were no canonical definitions for what it means for a rootkit to be installed,
-each participant provided his or her own evidence which satisfied his or her
-own definition. This led them to describe slightly different attacks, even
-though they all shared the same disk image.
+were no canonical definitions for what it means for a root kit to be
+installed, each participant provided his or her own evidence which satisfied
+his or her own definition. This led them to describe slightly different
+attacks, even though they all shared the same disk image. Judges of the
+competition served as the arbiters, deciding which evidence was sufficient for
+the winning entries.
 
 We did not set out to provide bullet-proof definitions for concepts such as
 deletion, file creation, etc. Instead, we wanted to model the same types of
@@ -1936,8 +1935,8 @@ reached regarding these definitions, we would use it, but at the moment we
 model only certain de facto standards.
 
 That said, these definitions are more powerful than those found in the
-Honeynet researchers' write-ups. Our definitions live in the land of
-manipulatable, provable properties. This means they can serve as building
+Honeynet researchers' write-ups. Our definitions live in the land of formal,
+declarative, composable properties. This means they can serve as building
 blocks for larger properties, combined into general purpose lemmas, and
 de-constructed into independent components. In this form, forensics
 researchers can not only make concrete statements about their results and
@@ -1958,13 +1957,13 @@ that cannot scale is already useless.
 
 Instead, the design presented (which utilized proof by reflection) causes a
 well-developed proof to grow only with the size of the {\em lemmas}.
-Regardless of disk size, the proof term can remain fixed, reducing the
-burden for proof-checkers. Further, with a consistent proof term, we open the
-possibility of expanding beyond some of Coq's limitations. As discussed
-previously, due to Coq's representations, relevant sections on disk must be
-limited to a few thousand offsets. However, we could hypothetically export a
-proof term generated within Coq on a smaller disk size and run it through an
-external proof-checker to handle larger disk images.
+Regardless of disk size, the proof term can remain fixed (though referring to
+the disk), reducing the burden for proof-checkers. Further, with a consistent
+proof term, we open the possibility of expanding beyond some of Coq's
+limitations. As discussed previously, due to Coq's representations, relevant
+sections on disk must be limited to a few thousand offsets. However, we could
+hypothetically export a proof term generated within Coq on a smaller disk size
+and run it through an external proof-checker to handle larger disk images.
 
 Unfortunately, this approach has failed when attempting it using the external
 tool, {\tt coqchk}. Most likely due to our use of {\tt vm\_compute}, a faster
@@ -2036,36 +2035,54 @@ automation. Providing one of a pre-defined set of evidence types and a disk
 image should be enough for a script to generate the required assumptions,
 evidence, and proof terms. As a second step, we could develop a meta language
 or other interface for describing the types of evidence needed and allow a
-program to search and generate proofs. This connects with wider work by Radha
-Jagadeesan, Corin Pitcher, and James Riely of DePaul University, which
-includes efforts to automate forensic methods.
+program to search and generate proofs. 
 
 The proof-by-reflection technique has shown itself quite useful in this
 research. However, we have largely only provided ``one-way'' reflection
 proofs; that is, that the computational version implies the {\tt Prop}
-version. As a matter of cleanliness, these lemmas should be extended to show
-that the latter also implies the former. This would prove the two versions to
-be isomorphic, which would allow automated programs to mix and match versions
-as needed. 
+version. For example, have have shown that boolean equality between Files
+implies logical equality, but we have not shown whether logical equality
+implies the boolean form.  As a matter of cleanliness, these lemmas should be
+extended to show that the latter also implies the former. This would prove the
+two versions to be equivalent, which would allow automated programs to mix and
+match versions as needed. 
 
-We could also extend that isomorphism to include additional (beyond simply
-boolean and easy-to-read {\tt Prop}) forms of the definitions. Providing many
-different (yet convertible) forms of the definitions allows our hypothetical
-forensics search engine to use the form which is easiest to execute or
-type-check. One could imagine, for example, a version of the byte-fetching
-definition that fetched bytes in chunks or one that did not construct all of
-the temporary structures (Inodes, Superblocks, etc.), yet could imply into
-the definition described in this paper. Such a version would be faster to
-execute but provide the same results.
+We could extend our work to include additional types of equivalences between
+various forms of definitions (beyond simply boolean and easy-to-read {\tt
+Prop}). Providing many different (yet convertible) forms of the definitions
+allows our hypothetical forensics search engine to use the form which is
+easiest to execute or type-check. One could image, for example, a version of
+the byte-fetching definition that fetched bytes in chunks or one that did not
+construct all of the temporary structures (Inodes, Superblocks, etc.), yet
+could imply the definitions described in this paper. Such a version would be
+faster to execute but provide the same results.
 
-In general, our implementations for the relevant algorithms are not efficient.
-This leads to a great deal of duplicated effort by the proof-verifying
-type-checkers. Indeed, we currently require proofs by ran through Coq's {\tt
-vm\_compute} command, which is significantly optimized, for verification.
-Writing more efficient definitions will be crucial for industrial usage but
-could also prove more flexible (allowing the proof terms to be checked via
-{\tt coqchk}, for example.) As in all software, we first needed to show that
-our solutions {\em worked}; next we need to make them work well.
+Similarly, it would be helpful to create equivalences between the {\tt File}
+structure and a simpler form which could more easily be manipulated by
+external programs/verifiers. This might be a simple list of (start, end) pairs
+indicating which sequences of bytes in the disk image correspond to the data
+contained in a file. This simpler format would allow the external
+proof-checkers to validate hypotheses (like {\tt gunzip}) without needing to
+know anything about our {\tt File} structures or the underlying file systems.
+
+The {\tt gunzip} hypothesis should serve as a model for introducing the {\em
+original} disk image. Currently, we prove several lemmas about a {\em partial}
+disk image, but we have not, technically, shown that those lemmas apply to the
+entire, original disk image. Ideally, we would create a top-level variable to
+represent the whole disk image (as we did representing the ``gunzipping''
+operation). We would then define a relationship between partial disk images
+and the never-instantiated whole disk image such that if we were to prove our
+lemmas about the partial image, it would imply the same lemma regarding the
+whole image. This argument is easy to make, could conceivable be difficult to
+implement.
+
+Indeed, an external (to Coq) proof checker still needs to be written to verify
+these hypotheses. Such a proof checker need not be as complete as Coq, and
+should certainly avoid the computational limits Coq imposes. Ideally, such a
+checker would have a very small, hand-verified code base; it only needs to
+verify the types of hypotheses that Coq cannot. As we have seen with this
+research, this means (at minimum) the ability to read from the {\em whole}
+disk image.
 
 This paper describes only a few of the types of evidence that would be
 required for a complete forensics tool. We used a single honeynet challenge to
@@ -2079,12 +2096,12 @@ frequently visited a certain domain while web browsing?
 Finally, the vast majority of this paper has been devoted to computations or
 definitions; we have not described many propositional relationships. It would
 be worthwhile to prove propositions about these definitions (similar to how we
-showed JPEG files cannot be Gzips.) We might prove that a patch applied to a
-disk image could restore a deleted file (as studied by Charles Winebrinner,)
-that deletion events imply the associated file is marked deleted, that files
-can exist which are not addressable, or any number of other proofs and lemmas.
-These would then make proofs about particular disk images even easier to
-apply. 
+showed JPEG files cannot be Gzips). We might prove that a patch applied to a
+disk image could restore a deleted file\footnote{As studied by Charles
+Winebrinner}, that deletion events imply the associated file is marked
+deleted, that files can exist which are not addressable, or any number of
+other proofs and lemmas.  These would then make proofs about particular disk
+images even easier to apply. 
 
 \acks
 First, I wish to thank my colleagues at DePaul, including Malik Aldubayan,
@@ -2123,6 +2140,8 @@ project for at least a few days.
   ``Chapter 8 Tactics''; section 8.7.1, {\tt cbv}. {\em The Coq Proof
   Assistant}.
   \url{http://coq.inria.fr/refman/Reference-Manual010.html#hevea\_tactic127}
+\bibitem{dff}
+  Digital Forensics Framework. \url{http://www.digital-forensic.org/}
 \bibitem{gimp}
   GNOME Bugzilla. {\em Add support for EXIF or TIFF/EP data (in JPEG, TIFF and
   PNG formats}, 06/20/2001.
