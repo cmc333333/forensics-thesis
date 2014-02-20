@@ -284,7 +284,6 @@ identify itself.
 \begin{lstlisting}
 Inductive FileId: Type :=
   | Ext2Id: N -> FileId
-  | TarId: FileId -> N -> FileId
   | MockId: list (N*Byte) -> FileId
 .
 \end{lstlisting}
@@ -295,16 +294,14 @@ function, {\tt fetchByte}. This function uses the provided disk and file
 identifier to retrieve a requested byte, decoupling the file data from the
 {\tt File} structure. For Ext2, this means delegating to the appropriate Ext2
 function (described in Section \ref{sec:ext2}); for the so-called ``Mock''
-file system, it means searching through the contained list of offsets; Tar
-file processing will be explained in Section \ref{sec:tar}.
+file system, it means searching through the contained list of offsets.
 
 \begin{lstlisting}
-Fixpoint fetchByte (fileId: FileId) (disk: Disk)
+Definition fetchByte (fileId: FileId) (disk: Disk)
   : N->@Fetch Byte := 
   match fileId with
   | Ext2Id inodeIndex => Ext2.fileByte disk inodeIndex
   | MockId data => findInPairList data
-  | TarId fs shiftAmt => fetchByte fs (shift disk shiftAmt)
   end.
 \end{lstlisting}
 
@@ -457,37 +454,43 @@ will use Coq's tactic language to build a proof term to serve as evidence.
 
 \begin{lstlisting}
 Lemma borland_honeynet_file:
-  (gunzip file23) = gunzipped_partial
-    -> borland_rootkit honeynet_image_partial.
+  forall (disk: Disk),
+    honeynet_image_partial $\subseteq$ disk ->
+      gunzipped_partial f$\subseteq$ (gunzip file23 disk) ->
+        borland_rootkit disk.
   Proof.
+    intros disk.
+    apply borland_rootkit_witness_subset.
     apply borland_reflection 
-      with (file := file23) (gunzipped := gunzipped_partial)
-           (filename1 := maliciousFileName1) 
+      with (filename1 := maliciousFileName1) 
            (filename2 := maliciousFileName2).
     vm_compute. reflexivity.
 Qed.
 \end{lstlisting}
 
-This very simple proof clearly hides a great deal of complexity. Why is there
-a hypothesis about {\tt gunzip}? What are {\tt honeynet\_image\_partial} and
-{\tt gunzipped\_partial}? How does {\tt borland\_reflection} work? Where did
-{\tt file23} and the \\{\tt maliciousFileName}s come from?  While we will
+This relatively simple proof hides a great deal of complexity. Why are there
+hypotheses about {\tt gunzip} and subsets? What are {\tt
+honeynet\_image\_partial} and {\tt gunzipped\_partial}? How do {\tt
+borland\_rootkit\_witness\_subset} and {\tt borland\_reflection} work? Where
+did {\tt file23} and the {\tt maliciousFileName}s come from?  While we will
 answer each of these questions in detail, it is important to recognize that
-writing the individual proof is very straight forward (and could easily be
-automated).  This plays a heavy role in the future of this type of research,
-as discussed in section \ref{sec:future}. Further, the proof term itself is
-quite small, the importance of which will be covered in section
-\ref{subsec:reflection}.
+writing the individual proof is very straight forward as the lemmas applied
+would not vary from disk to disk. Indeed, they should be easy to automate,
+playing a heavy role in the future of this type of research, as discussed in
+section \ref{sec:future}. Further, the proof term itself is quite small, the
+importance of which will be covered in section \ref{subsec:reflection}.
 
 \subsection{Disk Images}
 
-{\tt honeynet\_image\_partial} has the type, {\tt Disk}, which is used to
-represent a random-access disk throughout our definitions and proofs.
-Technically, it is function from {\tt N} to {\tt Fetch Byte}, acting as a
-byte-retrieval mechanism; give a {\tt Disk} an offset, and it will respond
-with the byte value at the offset requested or an error code. The {\tt
-ByteData} type is simply an alias of {\tt Disk}, but provides a more semantic
-name.
+While our proof will ultimately show validity over the whole disk image, we
+will only compute over a {\em partial} segment, dubbed {\tt
+honeynet\_image\_partial}. Both it and the larger image have the type, {\tt
+Disk}, which is used to represent random-access throughout our definitions and
+proofs.  Technically, {\tt Disk}s are functions from {\tt N} to {\tt Fetch
+Byte}, acting as a byte-retrieval mechanism; give a {\tt Disk} an offset, and
+it will respond with the byte value at the offset requested or an error code.
+The {\tt ByteData} type is simply an alias of {\tt Disk}, but provides a more
+semantic name.
 
 Generally, disk data is backed by an in-memory mapping via Coq's {\tt FMapAVL}
 tree, and must be generated from the true disk values. Due to Coq's
@@ -567,6 +570,78 @@ disk structure. We would simply extract a function which requires the disk
 image, feed it an empty {\tt Disk}, see where ({\tt MissingAt}) the function
 failed, retrieve that byte from disk, add it to the {\tt Disk} structure, and
 repeat until the function was successful.
+
+\subsection{Subsets and Monotonicity}
+While proving the lemma holds for a given partial disk image is valuable, our
+argument becomes stronger if we can prove the lemma for a {\em whole} disk. As
+we cannot load the entirety of the disk into Coq, we will proceed instead via
+a ``monotonicity'' proof. By this we mean that we will show that if particular
+lemmas apply for partial images, they also apply for ``whole'' disk image.
+Using these monotonicity proofs (such as {\tt
+borland\_rootkit\_witness\_subset}), we need only process the partial disk
+image.
+
+Let us first consider what it would mean for a {\tt Disk} to be a subset of
+another. This is relatively straight forward; if we were to find a byte on the
+partial, we would expect the same value to be present on the larger disk.
+
+\begin{lstlisting}
+Definition disk_subset (sub super: Disk) :=
+  forall (offset: N) (byte: Byte),
+    sub offset = Found byte -> super offset = Found byte.
+
+Infix "$\subseteq$" := disk_subset (at level 50).
+\end{lstlisting}
+
+Subsets in the context of {\tt Files} are a bit more complicated, as file
+access depends on the file system. If using the ``Mock'' file system, we will
+proceed similar to {\tt disk\_subset}, verifying that when the byte is present
+in the partial, the value is the same in the larger {\tt File}. Otherwise, the
+definition need only compare the fields of the {\tt File} for equality.
+
+\begin{lstlisting}
+Definition fileId_subset (sub super: FileId) :=
+  match (sub, super) with
+    | (Ext2Id _, Ext2Id _) => sub = super
+    | (MockId subData, MockId superData) =>
+        forall (idx: N) (byte: Byte),
+          (findInPairList subData idx) = Found byte ->
+            (findInPairList superData idx) = Found byte
+    | _ => False
+end.
+
+Definition file_subset (sub super: File) :=
+  fileId_subset sub.(fileId) super.(fileId)
+  /\ sub.(fileSize) = super.(fileSize)
+  /\ sub.(deleted) = super.(deleted)
+  /\ sub.(lastAccess) = super.(lastAccess)
+  /\ sub.(lastModification) = super.(lastModification)
+  /\ sub.(lastCreated) = super.(lastCreated)
+  /\ sub.(lastDeleted) = super.(lastDeleted).
+
+Infix "f$\subseteq$" := file_subset (at level 50).
+\end{lstlisting}
+
+Monotonicity will not apply for every property; imagine a property that
+checked if a byte was present, for example. This means that we will need to
+explicitly provide monotonicity proofs (as indicated by the ``{\tt \_subset}''
+suffix) on demand (and for many properties). We will leave a full accounting
+of these properties and proofs to the provided source code, but provide two
+examples here.
+
+\begin{lstlisting}
+Lemma isOnDisk_subset :
+  forall (sub super: Disk) (file: File),
+    sub $\subseteq$ super ->
+      isOnDisk file sub ->
+        isOnDisk file super.
+
+Lemma looksLikeRootkit_fsubset:
+  forall (sub super: File) (disk: Disk),
+    sub f$\subseteq$ super ->
+      looksLikeRootkit sub disk ->
+        looksLikeRootkit super disk.
+\end{lstlisting}
 
 \subsection{The Gunzip Hypothesis}
 \label{subsec:gunzip}
@@ -1428,140 +1503,41 @@ pairs will be a matter of shifting the ``start'' of the file again and again.
 
 \begin{lstlisting}
 Definition parseFileNameAndSize (tar: File) (offset: N) 
-  (disk: Disk)
-  : @Fetch (string*N) :=
-  let byteData := shift (fetchByte tar.(fileId) disk) 
-                        offset in
-  (parseFileName byteData) _fflatmap_ (fun name =>
-  (parseFileSize byteData) _fmap_ (fun size =>
+  (disk: Disk): @Fetch (string*N) :=
+  (parseFileName tar offset disk) _fflatmap_ (fun name =>
+  (parseFileSize tar offset disk) _fmap_ (fun size =>
     (name, size)
   )).
-\end{lstlisting}
-
-\subsection{More Functional Idioms}
-
-The first hundred bytes of the header are dedicated to the filename,
-regardless of filename length. To determine the file name, we will read those
-bytes and scan for the null-terminating string. Before we can explain how, we
-will create and discuss a few new functional idioms.
-
-{\tt upto} (the infix form of the {\tt range} function) acts as a simple
-method for creating a sequence of integers between the provided end points. We
-skip its definition as it requires an understanding of Coq's recursion over
-binary numbers.
-
-\begin{lstlisting}
-Compute (1 upto 4).
-     = 1 :: 2 :: 3 :: nil
-     : list N
-\end{lstlisting}
-
-The {\tt takeWhile} function takes two parameters, a boolean predicate and a
-list of elements. It returns the longest prefix of that list such that every
-element in the prefix sublist satisfies the predicate.
-
-\begin{lstlisting}
-Fixpoint takeWhile {A} (predicate: A->bool) (lst: list A)
-  : list A :=
-  match lst with
-  | head :: tail => 
-    if (predicate head) 
-    then head :: (takeWhile predicate tail)
-    else nil
-  | nil => nil
-end.
-\end{lstlisting}
-
-The {\tt map} function from Coq's standard library takes a transformation
-function and a list and generates a list such that each element is composed of
-that transformation applied to the elements of the original list. In this
-example, we convert each element of the integer list into a boolean indicating
-whether or not the element is even.
-
-\begin{lstlisting}
-Compute (map (fun el:N => el mod 2 =? 0)
-             (1 upto 6)).
-     = false :: true :: false :: true :: false :: nil
-     : list bool
-\end{lstlisting}
-
-The built-in {\tt fold\_left} function requires a bit more explanation.
-``Fold'' is a very flexible and powerful tool which allows one to convert a
-list of elements into a single value, given some combinator. This allows users
-to sum the elements in a list, find distinct values, or even re-implement {\tt
-map}. The interface accepts a list, a starting value for the ``accumulator''
-and a function which accepts a pair of (accumulator, next value). This
-function is called for each element in the list (which is passed via the
-second parameter) and the result is provided to the next iteration (as the
-accumulator).
-
-We can use fold to find the sum and length of a list of numbers:
-
-\begin{lstlisting}
-Compute (fold_left (fun (acc: N*N) (next: N) =>
-                        ((fst acc) + next, (snd acc) + 1))
-                   (5 :: 4 :: 3 :: nil)
-                   (0, 0)).
-     = (12, 3)
-     : N * N
-\end{lstlisting}
-
-Or we could reverse a list:
-
-\begin{lstlisting}
-Compute (fold_left (fun (acc: list N) (next: N) =>
-                        next :: acc)
-                   (1 :: 2 :: 3 :: nil)
-                   nil).
-     = 3 :: 2 :: 1 :: nil
-     : list N
 \end{lstlisting}
 
 \subsection{File Name}
 
 Retrieving the file name requires reading the first hundred bytes of the
-header and taking every character until the string is terminated (via a null
-character). As each attempt to read from the file could fail, and we would
-like that failure to ``percolate up,'' we will use {\tt fold\_left} to both
-propagate failures and collect bytes. The function we provide to it will
-accumulate via a {\tt Fetch (list Byte)}; should anything go wrong, the {\tt
-Fetch} will become a {\tt MissingAt} or {\tt ErrorString}. If everything
-proceeds as planned, the {\tt Fetch} will contain a list of the read bytes.
-This list will be in reverse order as we will be prepending each element to
-the it. As an added complication, when we reach a null character (indicated by
-{\tt Ascii.zero}), we stop accumulation and can ignore the {\tt next}
-value(s).  In the end, we want to remove the null character, reverse the list
-of bytes (so that it is in correct order) and convert it to a {\tt string} for
-future manipulation via the {\tt list2string} function.
+header and taking every character until the string is terminated (via a null).
+As each attempt to read from the file could fail, we will read each byte in
+sequence and only continue if a byte was read successfully. We then recurse
+until the null byte is hit, we have reached our hundred-byte limit, or an
+error occurs. To implement this, we will used {\tt N.peano\_rect}, the details
+of which are not relevant to this study. Instead, we will highlight the
+recursive call embedded within it.
 
 \begin{lstlisting}
-Definition parseFileName (bytes: ByteData) :=
-  let firstHundredBytes := map bytes (0 upto 100) in
-  let perByte := fun (acc: @Fetch (list Byte) )
-                     (next: @Fetch Byte) =>
-    match (acc, next) with
-    | (Found (hd :: tl), Found next) =>
-        if (ascii_eqb hd Ascii.zero)  (* Null *)
-        then acc
-        else Found (next :: hd :: tl)
-    | (Found _, Found next) =>
-        Found (next :: nil)
-    | (Found (hd :: tl), MissingAt idx) =>
-        if (ascii_eqb hd Ascii.zero)  (* Null *)
-        then acc
-        else MissingAt idx
-    | (Found (hd :: tl), ErrorString str) =>
-        if (ascii_eqb hd Ascii.zero)  (* Null *)
-        then acc
-        else ErrorString str
-    | (other, _) => other
-    end in
-  (fold_left perByte firstHundredBytes (Found nil)) 
-    _fmap_ (fun byteList => match byteList with
-    (* Strip off the null character *)
-    | hd :: tl => list2string (rev tl)
-    | _ => EmptyString
-    end).
+Definition parseFileName (tar: File) (offset: N) 
+  (disk: Disk): @Fetch string :=
+  ...
+  match (tar @[ offset + idx | disk ]) with
+  | Found byte =>
+    if (ascii_eqb byte Ascii.zero) (* Null *)
+    then Found EmptyString
+    else match (rec (idx + 1)) with
+    | Found rest => Found (String byte rest)
+    | MissingAt val => MissingAt val
+    | ErrorString val => ErrorString val
+    end
+  | MissingAt val => MissingAt val
+  | ErrorString val => ErrorString val
+  end
+  ...
 \end{lstlisting}
 
 
@@ -1571,14 +1547,15 @@ The size of a file within a tar can be determined by reading the 11 bytes
 starting at offset 124 of the associated header. The size is first encoded
 into octal, which is then represented as ASCII characters. Encoding in ASCII
 stems from the desire to keep the header human readable; the choice of octal
-most likely relates to standards at the time of the standard's construction.
-We implement our parsing with a simple recursive function which reads the next
-byte (i.e. character) from a list and converts that into the encoded integer
-value. The value is multiplied by 8 raised to the length of the remaining list
-to account for octal order of magnitude. If the byte does not fall into the
-range associated with ascii `0' through `7', an {\tt error} is returned as
-anything else does not fit our encoding expectations. Note that {\tt value}
-and {\tt error} are the two subtypes of {\tt Exc}, Coq's native option type.
+most likely relates to standards at the time of the file format's
+construction.  We implement our parsing with a simple recursive function which
+reads the next byte (i.e. character) from a list and converts that into the
+encoded integer value. The value is multiplied by 8 raised to the length of
+the remaining list to account for octal order of magnitude. If the byte does
+not fall into the range associated with ascii `0' through `7', an {\tt error}
+is returned as anything else does not fit our encoding expectations. Note that
+{\tt value} and {\tt error} are the two subtypes of {\tt Exc}, Coq's native
+option type.
 
 \begin{lstlisting}
 Fixpoint fromOctalAscii (bytes: list Byte) : Exc N :=
@@ -1596,19 +1573,36 @@ Fixpoint fromOctalAscii (bytes: list Byte) : Exc N :=
   end.
 \end{lstlisting}
 
-Retrieving the file size makes use of our sequence reader, {\tt seq\_list}, to
-read the eleven bytes starting at the 124th position within the tar header.
-This list of bytes is converted into a single number using the {\tt
-fromOctalAscii} function described above.
+We will attempt to read each of the eleven bytes of the file size header, and,
+if all goes well, pass that on to the {\tt fromOctalAscii} function described
+above. We must also account for a special case: tar files are sometimes padded
+to additional multiples of 512 via null bytes. This means that we will need to
+account for a file ``size'' indicated by all null bytes and equate that to a
+zero-length entry.
 
 \begin{lstlisting}
-Definition parseFileSize (bytes: ByteData) :=
-  (seq_list bytes 124 11)
-    _fflatmap_ (fun fileSizeList =>
-    match (fromOctalAscii fileSizeList) with
-    | error => ErrorString "Invalid Tar Size"
+Definition parseFileSize (tar: File) (offset: N) (disk: Disk)
+  : @Fetch N :=
+  (tar @[ offset + 124 | disk ]) _fflatmap_ (fun byte0 =>
+  (tar @[ offset + 125 | disk ]) _fflatmap_ (fun byte1 =>
+  ...
+  (tar @[ offset + 134 | disk ]) _fflatmap_ (fun byte10 =>
+    match (fromOctalAscii 
+            (byte0 :: byte1 :: byte2 :: byte3 :: byte4
+             :: byte5 :: byte6 :: byte7 :: byte8 :: byte9
+             :: byte10 :: nil)) with
+    | error =>
+        (* the last few chunks of the Tar file may be full 
+           of zeros *)
+        if ((Byte.eqb byte0 Ascii.zero)
+            && (Byte.eqb byte1 Ascii.zero)
+            ...
+            && (Byte.eqb byte10 Ascii.zero))
+          then Found 0
+          (* something went wrong *)
+          else ErrorString "Invalid Tar Size"
     | value size => Found size
-    end).
+    end))))))))))).
 \end{lstlisting}
 
 \subsection{Recursing Through}
@@ -1616,21 +1610,19 @@ Definition parseFileSize (bytes: ByteData) :=
 Now that we have a function which fetches one filename and size from the tar,
 we can call it repeatedly, moving the initial offset with each step.  We need
 to ignore the previous file header (512 bytes) plus the file size padded to
-512 bytes. We won't use a fixpoint, opting instead for a parameter ({\tt
+512 bytes. We will not use a fixpoint, opting instead for a parameter ({\tt
 nextCall}) to signify the recursive call; this is required by {\tt
 N.peano\_rect}, a library function which allows for recursive calls over
 binary numbers. To see the full definition of {\tt Tar.parseFileNames}, please
 see the source code.
 
 \begin{lstlisting}
-Definition recFileNameFrom (nextCall: N -> list string) 
-  (tar: File) (remaining: N) (disk: Disk) : list string :=
-  if (remaining <=? 0)
-    then nil
-  else match 
-    (parseFileNameAndSize tar 
-                          (tar.(fileSize) - remaining) 
-                          disk) with
+Definition recFileNameFrom (nextCall: N->@Fetch (list string))
+  (tar: File) (offset: N) (disk: Disk) : @Fetch (list string) :=
+  if (tar.(fileSize) <=? offset)
+    then Found nil
+  else match
+    (parseFileNameAndSize tar offset disk) with
     | Found (fileName, fileSize) =>
         (* Strip the next file out of the tar *)
         (* Round to the nearest 512 *)
@@ -1638,17 +1630,23 @@ Definition recFileNameFrom (nextCall: N -> list string)
           if (fileSize mod 512 =? 0)
           then fileSize + 512
           else 512 * (2 + (fileSize / 512))) in
-        fileName :: (nextCall (remaining - nextFileSize))
-    | _ => nil
+        match (nextCall (offset + nextFileSize)) with
+        | Found rest => Found (fileName :: rest)
+        | MissingAt val => MissingAt val
+        | ErrorString val => ErrorString val
+        end
+    | MissingAt val => MissingAt val
+    | ErrorString val => ErrorString val
     end.
 \end{lstlisting}
 
-With these functions, we can retrieve a list of the file names (as strings)
-contained within a tar file. Though the functions may seem a bit complicated,
-their usage is straight-forward and relatively efficient. We now provide the
-running times for the {\tt parseFileNames} function on various sizes of Tar
-headers. The times provided were generated on a Linux netbook; to see how the
-tests were performed, see the {\tt tar\_runtimes.v} file in the associated
+With this (and {\tt N.peano\_rect}) we can construct {\tt parseFileNames} to
+retrieve a list of the file names (as strings) contained within a tar file.
+In an effort to check the efficiency of this function, we now provide the
+running times for its application at various sizes of Tar headers. We will
+construct partial tar files with different header counts and test how long a
+Linux netbook takes to compute their file names. For details on how the tests
+were performed, see the {\tt tar\_runtimes.v} file in the associated
 repository.
 
 \begin{center}
@@ -1658,14 +1656,13 @@ repository.
     \hline
     Number of Headers & Running Time (seconds)\\
     \hline
-    1 & 0.03448\\
-    5 & 0.06558\\
-    10 & 0.10617\\
-    50 & 0.56047\\
-    100 & 1.231836\\
-    500 & 7.897615\\
-    1000 & 17.58687\\
-    5000 & 111.31558\\
+    1     &   0.0282\\
+    5     &   0.0353\\
+    10    &   0.0805\\
+    50    &   1.0157\\
+    100   &   3.5628\\
+    500   &  91.3177\\
+    1000  & 332.9175\\
     \hline
   \end{tabular}
 \end{center}
@@ -1856,12 +1853,14 @@ Definition lee_timeline :=
   :: nil.
 
 Lemma lee_honeynet_file:
-  Timeline.isSound lee_timeline honeynet_image_partial.
+  forall (disk: Disk),
+    honeynet_image_partial $\subseteq$ disk ->
+      Timeline.isSound lee_timeline disk.
 \end{lstlisting}
 
-As with {\tt borland\_rootkit}, proving this lemma is as simply as applying a
-reflection proof, computing, and apply the {\tt reflexivity} tactic. See the
-code linked in the appendix for details.
+As with {\tt borland\_rootkit}, proving this lemma involves applying a
+monotonicity proof, a reflection proof, and then computing. See the code
+linked in the appendix for details.
 
 
 \section{Are These Definitions Sufficient?}
@@ -1965,11 +1964,12 @@ sections on disk must be limited to a few thousand offsets. However, we could
 hypothetically export a proof term generated within Coq on a smaller disk size
 and run it through an external proof-checker to handle larger disk images.
 
-Unfortunately, this approach has failed when attempting it using the external
-tool, {\tt coqchk}. Most likely due to our use of {\tt vm\_compute}, a faster
-computation engine within Coq, we can prove properties with Coq that we cannot
-verify with {\tt coqchk}. Further research is required to verify this
-hypothesis and to develop a work-around if needed.
+Indeed, we can use the external tool {\tt coqchk} (a separate, tighter
+implementation of Coq's semantics) to verify our work. Our calls to the
+optimized {\tt vm\_compute} function are replaced by a significantly slower
+computation engine (on the order of 100-fold increase in run time). However,
+our tests have proven that using an external tool is possible -- we do not use
+any special tactics, etc.
 
 The size of the proof term is one important metric for tractability, but let
 us not forget execution time. On our relatively small examples (with a disk
@@ -1990,11 +1990,10 @@ computations to run.
     \hline
     Extra Bytes & Compute & Qed\\
     \hline
-    0 & 4.63443 & 3.95731\\
-  100 & 4.62438 & 3.92747\\
-  1,000 & 4.64941 & 3.99868\\
- 10,000 & 4.71911 & 3.96669\\
-100,000 & 4.62513 & 4.49423\\
+      0 & 4.7884 & 4.0130\\
+    100 & 4.8288 & 4.0045\\
+  1,000 & 4.7401 & 4.1144\\
+ 10,000 & 5.1437 & 4.6998\\
     \hline
     \multicolumn{3}{c}{}\\
     \hline
@@ -2002,11 +2001,10 @@ computations to run.
     \hline
     Extra Bytes & Compute & Qed\\
     \hline
-    0 & 1.54867 & 0.55369\\
-  100 & 1.55799 & 0.56295\\
-  1,000 & 1.78786 & 0.58348\\
- 10,000 & 4.33128 & 0.66116\\
-100,000 & 39.46831 & 0.78889\\
+      0 &   1.4835 & 0.5315\\
+    100 &   2.1761 & 0.6306\\
+  1,000 &   9.1315 & 0.7058\\
+ 10,000 & 124.2409 & 0.8508\\
     \hline
   \end{tabular}
 \end{center}
@@ -2065,24 +2063,13 @@ contained in a file. This simpler format would allow the external
 proof-checkers to validate hypotheses (like {\tt gunzip}) without needing to
 know anything about our {\tt File} structures or the underlying file systems.
 
-The {\tt gunzip} hypothesis should serve as a model for introducing the {\em
-original} disk image. Currently, we prove several lemmas about a {\em partial}
-disk image, but we have not, technically, shown that those lemmas apply to the
-entire, original disk image. Ideally, we would create a top-level variable to
-represent the whole disk image (as we did representing the ``gunzipping''
-operation). We would then define a relationship between partial disk images
-and the never-instantiated whole disk image such that if we were to prove our
-lemmas about the partial image, it would imply the same lemma regarding the
-whole image. This argument is easy to make, could conceivable be difficult to
-implement.
-
-Indeed, an external (to Coq) proof checker still needs to be written to verify
-these hypotheses. Such a proof checker need not be as complete as Coq, and
-should certainly avoid the computational limits Coq imposes. Ideally, such a
-checker would have a very small, hand-verified code base; it only needs to
-verify the types of hypotheses that Coq cannot. As we have seen with this
-research, this means (at minimum) the ability to read from the {\em whole}
-disk image.
+An external (to Coq) proof checker still needs to be written to verify
+hypotheses like {\tt gunzip} and the subset relation. Such a proof checker
+need not be as complete as Coq, and should certainly avoid the computational
+limits Coq imposes. Ideally, such a checker would have a very small,
+hand-verified code base; it only needs to verify the types of hypotheses that
+Coq cannot. As we have seen with this research, this means (at minimum) the
+ability to read from the {\em whole} disk image.
 
 This paper describes only a few of the types of evidence that would be
 required for a complete forensics tool. We used a single honeynet challenge to
