@@ -20,7 +20,7 @@
 %-----------------------------------------------------------------------------
 
 
-\documentclass[nocopyrightspace,preprint]{sigplanconf}
+\documentclass[nocopyrightspace]{sigplanconf}
 
 % The following \documentclass options may be useful:
 
@@ -56,7 +56,7 @@ keepspaces=true}
 \preprintfooter{}   % 'preprint' option specified.
 
 \title{Feasible Formal Forensics}
-\subtitle{Computational Proofs of a Honeynet Challenge}
+\subtitle{Computational Proofs of a Honeynet Challenge\thanks{Research supported in part by NSF 0915704.}}
 
 \authorinfo{CM Lubinski}
            {DePaul University}
@@ -151,7 +151,7 @@ One tactic (used by many operating systems) is to rely on the file extension
 loose definition, however, as malicious users need only give their files a
 different extension to avoid detection. We could instead review the JPEG
 specification and confirm that all of the meta data contained within a file is
-consistent with said that document. That approach runs the opposite end of the
+consistent with the image content. That approach runs the opposite end of the
 spectrum, requiring significantly more evidence. Further, what is generally
 thought as a JPEG file is most likely implemented via either the  JFIF or Exif
 standards (or an amalgamation of the two)\cite{jpeg}. Most applications are
@@ -273,13 +273,11 @@ Structure File := mkFile {
 \end{lstlisting}
 
 The {\tt FileId} type may take multiple forms; for the purposes of our
-exploration, we care only about Ext2 file systems, files embedded in a
-tar-archive, and files which are not tied to the disk image (see
-``assumptions'' as defined in Section \ref{sec:proving}). The first needs an
-Inode Index to serve as an identifier; the second needs the parent archive's
-file identifier as well as an offset within the archive; the final will make
-use of a (potentially partial) list of file data, {\tt list (N*Byte)}, to
-identify itself.
+exploration, we care only about Ext2 file systems and files which are not tied
+to the disk image (see ``assumptions'' as defined in Section
+\ref{sec:proving}). The first needs an Inode Index to serve as an identifier;
+the second will make use of a (potentially partial) list of file data, {\tt
+list (N*Byte)}, to identify itself.
 
 \begin{lstlisting}
 Inductive FileId: Type :=
@@ -576,7 +574,7 @@ While proving the lemma holds for a given partial disk image is valuable, our
 argument becomes stronger if we can prove the lemma for a {\em whole} disk. As
 we cannot load the entirety of the disk into Coq, we will proceed instead via
 a ``monotonicity'' proof. By this we mean that we will show that if particular
-lemmas apply for partial images, they also apply for ``whole'' disk image.
+lemmas apply for partial images, they also apply for the ``whole'' disk image.
 Using these monotonicity proofs (such as {\tt
 borland\_rootkit\_witness\_subset}), we need only process the partial disk
 image.
@@ -657,7 +655,7 @@ proofs. As discussed above, we will not read a full disk image; instead, we
 will generate a {\it sparse} map to represent that disk, including only the
 offsets of interest.
 
-We also use hypotheses to account for a transformations that would normally
+We also use hypotheses to account for a transformation that would normally
 be performed by a trusted, external program. We cannot run ``gunzip'', nor do
 we want to try to implement that algorithm within Coq. Instead, we describe an
 undefined implementation to encompass that activity. Our proofs cannot
@@ -674,8 +672,8 @@ generated the data needed for this file by using the {\it Sleuth Kit}'s {\tt
 icat} program to pull inode {\tt 23}'s contents. We then ran {\tt gunzip} on
 the resulting {\tt tgz} file, and pulled the relevant bytes (i.e. those
 necessary for the tar headers, see Section \ref{sec:tar}) into the {\tt File}.
-The latter step could be automated using {\tt Fetch} as described in the
-previous section.
+The latter step could be automated using {\tt Fetch} as described above
+(Section \ref{subsec:fetch}).
 
 \begin{center}
   \begin{tabular}{|l|r|}
@@ -1917,7 +1915,7 @@ would indicate a root kit installation could be present on disk. Clearly, no
 such software would have been installed, yet our definitions would be
 satisfied. Ultimately, the definitions we provide cannot guarantee their
 semantic meaning. It is up to the forensics community to determine how much
-evidence qualifies an ``enough''.
+evidence qualifies as ``enough''.
 
 This, too, is the methodology found within the Honeynet competition; as there
 were no canonical definitions for what it means for a root kit to be
@@ -2038,7 +2036,7 @@ program to search and generate proofs.
 The proof-by-reflection technique has shown itself quite useful in this
 research. However, we have largely only provided ``one-way'' reflection
 proofs; that is, that the computational version implies the {\tt Prop}
-version. For example, have have shown that boolean equality between Files
+version. For example, we have shown that boolean equality between Files
 implies logical equality, but we have not shown whether logical equality
 implies the boolean form.  As a matter of cleanliness, these lemmas should be
 extended to show that the latter also implies the former. This would prove the
